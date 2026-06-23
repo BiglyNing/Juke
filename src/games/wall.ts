@@ -88,62 +88,84 @@ export function rasterizeSolid(hole: Hole, w: number, h: number): BinaryMask {
   return { data, width: w, height: h };
 }
 
-// --- pose library --------------------------------------------------------
+// --- profile-driven poses ------------------------------------------------
 //
-// A generous humanoid: fixed head/torso/hips, with arms and legs aimed at the
-// given hand/foot targets. Radii are intentionally fat so a real body in the
-// pose fits through with room to spare (leniency does the rest).
+// A pose is a *variation* — a direction for each limb — applied to the player's
+// calibrated body. The hole's anchors (head/torso/shoulders/hips) come straight
+// from the BodyProfile, so the hole is always the player's size and position; the
+// variation just aims the limbs. Legs are only added when the player's legs were
+// in frame at calibration, so seated/close players get upper-body holes.
 
-interface Limbs {
-  handL: [number, number];
-  handR: [number, number];
-  footL: [number, number];
-  footR: [number, number];
+import type { BodyProfile, Vec } from '../engine/calibration';
+
+export interface Variation {
+  name: string;
+  /** If true, this pose is only offered when the player has legs in frame. */
+  needsLegs: boolean;
+  /** Limb aim directions (frame space, y points down); magnitude is normalized. */
+  armL: Vec;
+  armR: Vec;
+  legL?: Vec;
+  legR?: Vec;
 }
 
-const SHOULDER_L: [number, number] = [0.385, 0.27];
-const SHOULDER_R: [number, number] = [0.615, 0.27];
-const HIP_L: [number, number] = [0.44, 0.57];
-const HIP_R: [number, number] = [0.56, 0.57];
-
-function humanoid(name: string, l: Limbs): Hole {
-  const cap = (a: [number, number], b: [number, number], r: number): Capsule => ({
-    kind: 'capsule',
-    x0: a[0],
-    y0: a[1],
-    x1: b[0],
-    y1: b[1],
-    r,
-  });
-  return {
-    name,
-    shapes: [
-      { kind: 'circle', cx: 0.5, cy: 0.14, r: 0.085 }, // head
-      cap([0.5, 0.22], [0.5, 0.6], 0.135), // torso
-      cap(SHOULDER_L, l.handL, 0.07), // left arm
-      cap(SHOULDER_R, l.handR, 0.07), // right arm
-      cap(HIP_L, l.footL, 0.08), // left leg
-      cap(HIP_R, l.footR, 0.08), // right leg
-    ],
-  };
-}
-
-const FEET_TOGETHER = { footL: [0.45, 0.95] as [number, number], footR: [0.55, 0.95] as [number, number] };
-const FEET_APART = { footL: [0.3, 0.93] as [number, number], footR: [0.7, 0.93] as [number, number] };
-
-/** A small set of visually distinct poses; the arms are the main discriminator. */
-export const POSES: Hole[] = [
-  humanoid('Arms down', { handL: [0.33, 0.52], handR: [0.67, 0.52], ...FEET_TOGETHER }),
-  humanoid('Arms up', { handL: [0.34, 0.06], handR: [0.66, 0.06], ...FEET_TOGETHER }),
-  humanoid('T-pose', { handL: [0.16, 0.27], handR: [0.84, 0.27], ...FEET_TOGETHER }),
-  humanoid('Star', { handL: [0.2, 0.07], handR: [0.8, 0.07], ...FEET_APART }),
+/** A small set of distinct poses; arms are the main discriminator. */
+export const VARIATIONS: Variation[] = [
+  { name: 'Arms up', needsLegs: false, armL: { x: -0.25, y: -1 }, armR: { x: 0.25, y: -1 } },
+  { name: 'T-pose', needsLegs: false, armL: { x: -1, y: -0.05 }, armR: { x: 1, y: -0.05 } },
+  { name: 'Arms down', needsLegs: false, armL: { x: -0.35, y: 1 }, armR: { x: 0.35, y: 1 } },
+  { name: 'Cactus', needsLegs: false, armL: { x: -0.7, y: -0.7 }, armR: { x: 0.7, y: -0.7 } },
+  { name: 'One arm up', needsLegs: false, armL: { x: -0.3, y: -1 }, armR: { x: 0.35, y: 1 } },
+  {
+    name: 'Star',
+    needsLegs: true,
+    armL: { x: -0.8, y: -1 },
+    armR: { x: 0.8, y: -1 },
+    legL: { x: -0.6, y: 1 },
+    legR: { x: 0.6, y: 1 },
+  },
 ];
 
-/** Pick a pose, optionally avoiding the previous one so walls don't repeat. */
-export function pickPose(rand: () => number = Math.random, avoid?: Hole): Hole {
-  let pose = POSES[Math.floor(rand() * POSES.length)];
-  if (avoid && POSES.length > 1) {
-    while (pose === avoid) pose = POSES[Math.floor(rand() * POSES.length)];
+function norm(v: Vec): Vec {
+  const m = Math.hypot(v.x, v.y) || 1;
+  return { x: v.x / m, y: v.y / m };
+}
+function reach(from: Vec, dir: Vec, len: number): Vec {
+  const d = norm(dir);
+  return { x: clamp01(from.x + d.x * len), y: clamp01(from.y + d.y * len) };
+}
+function clamp01(x: number): number {
+  return Math.max(0.02, Math.min(0.98, x));
+}
+
+/** Build a wall hole for `v`, fitted to the calibrated `p`. */
+export function holeFromProfile(p: BodyProfile, v: Variation): Hole {
+  const cap = (a: Vec, b: Vec, r: number): Capsule => ({ kind: 'capsule', x0: a.x, y0: a.y, x1: b.x, y1: b.y, r });
+  const shapes: Shape[] = [
+    { kind: 'circle', cx: p.head.x, cy: p.head.y, r: p.headR },
+    cap(p.neck, p.pelvis, p.torsoR),
+    cap(p.shoulderL, reach(p.shoulderL, v.armL, p.armLen), p.limbR),
+    cap(p.shoulderR, reach(p.shoulderR, v.armR, p.armLen), p.limbR),
+  ];
+  if (p.hasLegs) {
+    shapes.push(
+      cap(p.hipL, reach(p.hipL, v.legL ?? { x: -0.15, y: 1 }, p.legLen), p.limbR),
+      cap(p.hipR, reach(p.hipR, v.legR ?? { x: 0.15, y: 1 }, p.legLen), p.limbR),
+    );
   }
-  return pose;
+  return { name: v.name, shapes };
+}
+
+/** Pick a variation valid for this body (no leg poses if no legs), avoiding a repeat. */
+export function pickVariation(
+  profile: BodyProfile,
+  rand: () => number = Math.random,
+  avoid?: Variation,
+): Variation {
+  const pool = VARIATIONS.filter((v) => profile.hasLegs || !v.needsLegs);
+  let pick = pool[Math.floor(rand() * pool.length)];
+  if (avoid && pool.length > 1) {
+    while (pick === avoid) pick = pool[Math.floor(rand() * pool.length)];
+  }
+  return pick;
 }

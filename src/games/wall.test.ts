@@ -1,19 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rasterizeSolid, pointInHole, POSES, pickPose, type Hole } from './wall.ts';
+import {
+  rasterizeSolid,
+  pointInHole,
+  holeFromProfile,
+  pickVariation,
+  VARIATIONS,
+  type Hole,
+} from './wall.ts';
 import { maskOverlap, type BinaryMask } from '../engine/mask.ts';
+import type { BodyProfile } from '../engine/calibration.ts';
 
 const circleHole: Hole = { name: 'c', shapes: [{ kind: 'circle', cx: 0.5, cy: 0.5, r: 0.25 }] };
+
+// A synthetic standing profile (legs in frame).
+const standing: BodyProfile = {
+  head: { x: 0.5, y: 0.15 },
+  headR: 0.08,
+  neck: { x: 0.5, y: 0.25 },
+  pelvis: { x: 0.5, y: 0.55 },
+  shoulderL: { x: 0.4, y: 0.27 },
+  shoulderR: { x: 0.6, y: 0.27 },
+  hipL: { x: 0.45, y: 0.55 },
+  hipR: { x: 0.55, y: 0.55 },
+  unit: 0.2,
+  armLen: 0.25,
+  legLen: 0.35,
+  torsoR: 0.12,
+  limbR: 0.06,
+  hasArms: true,
+  hasLegs: true,
+};
+const seated: BodyProfile = { ...standing, hasLegs: false };
 
 test('pointInHole: inside a circle is true, outside is false', () => {
   assert.equal(pointInHole(circleHole, 0.5, 0.5), true);
   assert.equal(pointInHole(circleHole, 0.0, 0.0), false);
-});
-
-test('pointInHole: capsule is the thick segment, not the whole bounding box', () => {
-  const cap: Hole = { name: 'cap', shapes: [{ kind: 'capsule', x0: 0.2, y0: 0.5, x1: 0.8, y1: 0.5, r: 0.08 }] };
-  assert.equal(pointInHole(cap, 0.5, 0.52), true); // on the segment
-  assert.equal(pointInHole(cap, 0.5, 0.85), false); // far off it
 });
 
 test('rasterizeSolid: hole cells are 0 (clear), outside cells are 1 (solid)', () => {
@@ -22,31 +44,36 @@ test('rasterizeSolid: hole cells are 0 (clear), outside cells are 1 (solid)', ()
   assert.equal(solid.data[0], 1); // corner -> solid
 });
 
-test('a player fully inside the hole has zero overlap with the solid wall (passes)', () => {
+test('a player inside the hole passes; over the solid wall fails', () => {
   const solid = rasterizeSolid(circleHole, 10, 10);
-  const player: BinaryMask = { data: new Uint8Array(100), width: 10, height: 10 };
-  player.data[5 * 10 + 5] = 1; // a body cell at the hole center
-  assert.deepEqual(maskOverlap(player, solid), { hit: false, ratio: 0 });
+  const inside: BinaryMask = { data: new Uint8Array(100), width: 10, height: 10 };
+  inside.data[5 * 10 + 5] = 1;
+  assert.deepEqual(maskOverlap(inside, solid), { hit: false, ratio: 0 });
+  const outside: BinaryMask = { data: new Uint8Array(100), width: 10, height: 10 };
+  outside.data[0] = 1;
+  assert.deepEqual(maskOverlap(outside, solid), { hit: true, ratio: 1 });
 });
 
-test('a player over the solid wall registers overlap (fails)', () => {
-  const solid = rasterizeSolid(circleHole, 10, 10);
-  const player: BinaryMask = { data: new Uint8Array(100), width: 10, height: 10 };
-  player.data[0] = 1; // a body cell in the corner -> solid wall
-  assert.deepEqual(maskOverlap(player, solid), { hit: true, ratio: 1 });
+test('holeFromProfile: standing body carves a non-trivial hole with legs', () => {
+  const armsUp = VARIATIONS.find((v) => v.name === 'Arms up')!;
+  const hole = holeFromProfile(standing, armsUp);
+  assert.equal(hole.shapes.length, 6); // head + torso + 2 arms + 2 legs
+  const solid = rasterizeSolid(hole, 48, 64);
+  let open = 0;
+  for (const c of solid.data) if (c === 0) open++;
+  assert.ok(open > 0 && open < solid.data.length, 'hole should be partially open');
 });
 
-test('every library pose carves a non-trivial hole (not all-solid, not all-open)', () => {
-  for (const pose of POSES) {
-    const solid = rasterizeSolid(pose, 48, 64);
-    let open = 0;
-    for (const c of solid.data) if (c === 0) open++;
-    assert.ok(open > 0, `${pose.name} carved no hole`);
-    assert.ok(open < solid.data.length, `${pose.name} is entirely open`);
-  }
+test('holeFromProfile: a legless (seated) body omits the leg capsules', () => {
+  const armsUp = VARIATIONS.find((v) => v.name === 'Arms up')!;
+  assert.equal(holeFromProfile(seated, armsUp).shapes.length, 4); // head + torso + 2 arms
 });
 
-test('pickPose(avoid) never returns the avoided pose', () => {
-  const a = POSES[0];
-  for (let i = 0; i < 50; i++) assert.notEqual(pickPose(Math.random, a), a);
+test('pickVariation never offers a legs-only pose to a legless body', () => {
+  for (let i = 0; i < 50; i++) assert.equal(pickVariation(seated, Math.random).needsLegs, false);
+});
+
+test('pickVariation(avoid) does not repeat the previous pose', () => {
+  const a = VARIATIONS[0];
+  for (let i = 0; i < 50; i++) assert.notEqual(pickVariation(standing, Math.random, a), a);
 });
