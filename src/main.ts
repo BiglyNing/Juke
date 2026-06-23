@@ -3,6 +3,16 @@ import { PoseLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision
 import { startCamera, CameraError, type CameraHandle } from './engine/camera';
 import { createPosePerception, PerceptionError, type PosePerception } from './engine/perception';
 import { showOverlay, hideOverlay } from './shell/overlay';
+import { downsample, smoothEMA, binarize, erode, type Grid, type BinaryMask } from './engine/mask';
+import { overBudget } from './engine/budget';
+import { FixtureRecorder, downloadFixture } from './engine/fixture';
+import {
+  debugParams,
+  isDebugOn,
+  toggleDebug,
+  setDebugVisible,
+  setRecordingStatus,
+} from './shell/debug';
 
 // ---------------------------------------------------------------------------
 // Phase 0: canvas + device-pixel-aware sizing + the always-on render loop.
@@ -35,10 +45,16 @@ let inferenceMs = 0;
 let lastFrame = performance.now();
 let fps = 0;
 
-// Reused offscreen canvas for painting the low-res segmentation mask before it
-// is scaled up onto the stage.
+// Reused offscreen canvases: one for the silhouette overlay, one for the
+// blocky debug collision grid.
 const maskCanvas = document.createElement('canvas');
 const maskCtx = maskCanvas.getContext('2d')!;
+const gridCanvas = document.createElement('canvas');
+const gridCtx = gridCanvas.getContext('2d')!;
+
+// Phase 2: temporal-smoothing history + fixture recorder.
+let prevGrid: Grid | null = null;
+const recorder = new FixtureRecorder();
 
 function loop(now: number): void {
   const dt = now - lastFrame;
@@ -48,15 +64,26 @@ function loop(now: number): void {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (running) {
-    renderPerception(now);
+    renderPerception(now, dt);
     drawHud();
   } else {
     drawIdle(now);
   }
 
+  // Debug "force over budget": burn time so the HUD readout goes red and you
+  // can confirm the budget alarm works without needing a slow machine.
+  if (debugParams.stress) busyWait(40);
+
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+function busyWait(ms: number): void {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
+    /* spin */
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Idle background — a gentle pulse so the canvas is visibly alive (and proves
@@ -82,6 +109,8 @@ function drawIdle(now: number): void {
 
 // ---------------------------------------------------------------------------
 // Phase 1: draw the video, the silhouette mask overlay, and the pose skeleton.
+// Phase 2: also run the collision pipeline (downsample/EMA/erode), draw the
+// debug grid, and feed the fixture recorder.
 // ---------------------------------------------------------------------------
 
 interface Rect {
@@ -108,7 +137,7 @@ function drawMirrored(src: CanvasImageSource, rect: Rect): void {
   ctx.restore();
 }
 
-function renderPerception(now: number): void {
+function renderPerception(now: number, dt: number): void {
   const { camera, perception } = running!;
   const video = camera.video;
   if (video.videoWidth === 0) return;
@@ -128,25 +157,56 @@ function renderPerception(now: number): void {
   const result = perception.detect(video, now);
   inferenceMs = inferenceMs * 0.9 + (performance.now() - t0) * 0.1;
 
+  // Pull the mask floats once (they survive close()), then free the GPU buffer.
+  let floats: Float32Array | null = null;
+  let mw = 0;
+  let mh = 0;
   const masks = result.segmentationMasks;
   if (masks && masks.length > 0) {
-    drawMask(masks[0], rect);
+    const m = masks[0];
+    mw = m.width;
+    mh = m.height;
+    floats = m.getAsFloat32Array();
+    drawMaskOverlay(floats, mw, mh, rect);
+    m.close();
   }
 
-  const poses = result.landmarks;
-  if (poses.length > 0) {
-    drawSkeleton(poses[0], px, py);
+  const pose = result.landmarks.length > 0 ? result.landmarks[0] : null;
+
+  // Phase 2 pipeline: only pay for it when the overlay is up or we're recording.
+  if (floats && (isDebugOn() || recorder.active)) {
+    const dstW = debugParams.res;
+    const dstH = Math.max(1, Math.round((dstW * mh) / mw));
+    const ds = downsample(floats, mw, mh, dstW, dstH);
+    const smoothed = smoothEMA(prevGrid, ds, debugParams.alpha);
+    prevGrid = smoothed;
+
+    if (isDebugOn() && debugParams.showGrid) {
+      const collision = erode(binarize(smoothed, 0.5), debugParams.erodePx);
+      drawDebugGrid(collision, rect);
+    }
+
+    if (recorder.active) {
+      // Record the raw downsample so replay can re-apply its own smoothing.
+      const full = recorder.capture(ds, pose, dt);
+      setRecordingStatus(`recording… ${recorder.count} frames`);
+      if (full) {
+        downloadFixture(recorder.toFixture(), 'juke-fixture.json');
+        setRecordingStatus(`saved ${recorder.count}-frame fixture ✓`);
+      }
+    }
+  } else if (!isDebugOn() && !recorder.active) {
+    prevGrid = null; // drop stale history when the pipeline is idle
   }
+
+  if (pose) drawSkeleton(pose, px, py);
 }
 
 /**
  * Paint the foreground-confidence mask as a translucent neon overlay. The mask
  * is a low-res float (0..1) buffer; we threshold lightly and scale it up.
  */
-function drawMask(mask: { width: number; height: number; getAsFloat32Array(): Float32Array; close(): void }, rect: Rect): void {
-  const { width: w, height: h } = mask;
-  const data = mask.getAsFloat32Array();
-
+function drawMaskOverlay(data: Float32Array, w: number, h: number, rect: Rect): void {
   if (maskCanvas.width !== w || maskCanvas.height !== h) {
     maskCanvas.width = w;
     maskCanvas.height = h;
@@ -166,9 +226,50 @@ function drawMask(mask: { width: number; height: number; getAsFloat32Array(): Fl
   ctx.globalAlpha = 0.45;
   drawMirrored(maskCanvas, rect);
   ctx.globalAlpha = 1;
+}
 
-  // Free the GPU-backed mask buffer.
-  mask.close();
+/**
+ * Draw the low-res eroded collision mask as a blocky magenta grid over the
+ * video, plus faint cell lines — this is what the game actually judges against,
+ * made visible so tuning the sliders has an immediate, legible effect.
+ */
+function drawDebugGrid(mask: BinaryMask, rect: Rect): void {
+  const { width: w, height: h } = mask;
+  if (gridCanvas.width !== w || gridCanvas.height !== h) {
+    gridCanvas.width = w;
+    gridCanvas.height = h;
+  }
+  const img = gridCtx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4;
+    if (mask.data[i]) {
+      img.data[o] = 255; // R
+      img.data[o + 1] = 46; // G
+      img.data[o + 2] = 136; // B
+      img.data[o + 3] = 170; // A
+    }
+  }
+  gridCtx.putImageData(img, 0, 0);
+
+  ctx.imageSmoothingEnabled = false;
+  drawMirrored(gridCanvas, rect);
+  ctx.imageSmoothingEnabled = true;
+
+  // Cell lines (a uniform grid is mirror-symmetric, so no transform needed).
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let c = 0; c <= w; c++) {
+    const x = Math.round(rect.x + (c / w) * rect.w) + 0.5;
+    ctx.moveTo(x, rect.y);
+    ctx.lineTo(x, rect.y + rect.h);
+  }
+  for (let r = 0; r <= h; r++) {
+    const y = Math.round(rect.y + (r / h) * rect.h) + 0.5;
+    ctx.moveTo(rect.x, y);
+    ctx.lineTo(rect.x + rect.w, y);
+  }
+  ctx.stroke();
 }
 
 const VISIBILITY_THRESHOLD = 0.5;
@@ -204,15 +305,65 @@ function drawSkeleton(
     ctx.arc(px(lm.x), py(lm.y), r, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Debug: per-landmark visibility scores listed down the side.
+  if (isDebugOn()) drawVisibilityScores(landmarks);
+}
+
+const LANDMARK_LABELS = [
+  'nose', 'L.eye-in', 'L.eye', 'L.eye-out', 'R.eye-in', 'R.eye', 'R.eye-out',
+  'L.ear', 'R.ear', 'mouth-L', 'mouth-R', 'L.shoulder', 'R.shoulder', 'L.elbow',
+  'R.elbow', 'L.wrist', 'R.wrist', 'L.pinky', 'R.pinky', 'L.index', 'R.index',
+  'L.thumb', 'R.thumb', 'L.hip', 'R.hip', 'L.knee', 'R.knee', 'L.ankle',
+  'R.ankle', 'L.heel', 'R.heel', 'L.foot', 'R.foot',
+];
+
+function drawVisibilityScores(landmarks: NormalizedLandmark[]): void {
+  const size = Math.max(10, Math.round(canvas.width / 150));
+  ctx.font = `${size}px ui-monospace, monospace`;
+  ctx.textBaseline = 'top';
+  const x = canvas.width - Math.round(canvas.width / 4.5);
+  let y = Math.round(canvas.height / 3);
+  for (let i = 0; i < landmarks.length; i++) {
+    const v = landmarks[i].visibility ?? 0;
+    ctx.fillStyle = v >= VISIBILITY_THRESHOLD ? 'rgba(0, 230, 255, 0.9)' : 'rgba(255, 46, 136, 0.8)';
+    ctx.fillText(`${(LANDMARK_LABELS[i] ?? i).padEnd(10)} ${v.toFixed(2)}`, x, y);
+    y += size + 2;
+  }
 }
 
 function drawHud(): void {
   const pad = Math.round(canvas.width / 80);
-  ctx.font = `${Math.round(canvas.width / 90)}px system-ui, sans-serif`;
+  const frameMs = 1000 / fps;
+  const over = overBudget(frameMs, inferenceMs);
+  ctx.font = `${Math.round(canvas.width / 90)}px ui-monospace, monospace`;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(232, 236, 244, 0.85)';
-  ctx.fillText(`${fps.toFixed(0)} fps  ·  inference ${inferenceMs.toFixed(1)} ms`, pad, pad);
+  ctx.fillStyle = over ? '#ff2e88' : 'rgba(232, 236, 244, 0.85)';
+  ctx.fillText(
+    `${fps.toFixed(0)} fps · frame ${frameMs.toFixed(1)}ms · inference ${inferenceMs.toFixed(1)}ms` +
+      (over ? '  ⚠ OVER BUDGET' : ''),
+    pad,
+    pad,
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Debug + recording keys.
+// ---------------------------------------------------------------------------
+
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  const k = e.key.toLowerCase();
+  if (k === 'd') {
+    toggleDebug();
+  } else if (k === 'r') {
+    if (!recorder.active) {
+      recorder.start(90);
+      setDebugVisible(true); // surface the status readout
+      setRecordingStatus('recording… 0 frames');
+    }
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Start flow: user gesture -> camera -> model -> stream. Every failure shows a
@@ -257,6 +408,6 @@ async function start(): Promise<void> {
 
 showOverlay({
   title: 'Juke',
-  body: 'A webcam motion arcade. Stand back so your whole body is in frame, then move — you should see your silhouette and skeleton tracked live.',
+  body: 'A webcam motion arcade. Stand back so your whole body is in frame, then move — you should see your silhouette and skeleton tracked live. Press D for the debug overlay.',
   action: { label: 'Enable camera & start', onClick: start },
 });

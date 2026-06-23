@@ -90,3 +90,66 @@ body {
 .overlay button:active {
   transform: translateY(0) scale(0.99);
 }
+
+/* Debug tuning panel (Phase 2). Toggled with the D key. */
+.debug-panel {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 16rem;
+  padding: 0.75rem 0.9rem;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: rgba(7, 8, 13, 0.82);
+  border: 1px solid rgba(0, 230, 255, 0.35);
+  border-radius: 0.5rem;
+  backdrop-filter: blur(3px);
+  z-index: 10;
+  user-select: none;
+}
+
+.dbg-title {
+  color: var(--neon);
+  letter-spacing: 0.06em;
+  margin-bottom: 0.6rem;
+  font-size: 0.72rem;
+}
+
+.dbg-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 2.2rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.3rem 0;
+}
+
+.dbg-row.dbg-check {
+  grid-template-columns: auto 1fr;
+}
+
+.dbg-name {
+  color: var(--muted);
+}
+
+.dbg-val {
+  text-align: right;
+  color: var(--neon);
+}
+
+.dbg-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--neon);
+}
+
+.dbg-row input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.dbg-status {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--accent);
+  font-size: 0.72rem;
+}
