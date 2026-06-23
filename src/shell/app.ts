@@ -214,6 +214,7 @@ export class Shell {
     game.configure?.(this.result ?? { profile: null });
     this.state = 'play';
     this.hudScore = -1;
+    screens.hideAll(); // clear the countdown ("GO") before the HUD goes up
     screens.showHud(game.title);
   }
 
