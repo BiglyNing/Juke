@@ -22,7 +22,7 @@ Everything runs **client-side in the browser** — no backend, no video ever lea
 
 ## Play it
 
-🔗 **Live:** _(coming soon — deployed link goes here)_
+🔗 **Live:** https://biglyning.github.io/Juke/
 
 **For the best experience:** use a laptop/desktop with a webcam, **stand back ~6 ft** so your whole body is in frame, face a window or light source, and use a plain background. (Hand Simon-Says works seated — just show your hand.)
 
