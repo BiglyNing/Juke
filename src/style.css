@@ -1,11 +1,64 @@
+/* ===========================================================================
+ * Juke — design system (Phase 5 visual-identity foundation).
+ * Direction: CRT VAPORWAVE. Deep indigo base, teal/magenta/sunset neon,
+ * scanline texture, Orbitron display + Space Mono UI. Every screen built after
+ * this inherits these tokens, so the "vibe-coded defaults" look never accretes.
+ *
+ * The JS mirror of these tokens lives in `src/shell/theme.ts` (canvas UI reads
+ * from there). Keep the two in sync.
+ * ======================================================================== */
+
 :root {
   color-scheme: dark;
-  --bg: #07080d;
-  --neon: #00e6ff;
-  --accent: #ff2e88;
-  --text: #e8ecf4;
-  --muted: #8a93a6;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* --- palette (owned; not the stock cyan/magenta) --- */
+  --base: #0c0a1c;
+  --bg: #14122b;
+  --surface: #1d1a3a;
+  --surface-hi: #2a2552;
+  --teal: #2ee6c8;
+  --magenta: #ff4fd8;
+  --sunset: #ff9f45;
+  --text: #eae6ff;
+  --muted: #9b93c9;
+  --ok: #5cf0a8;
+  --warn: #ffc24b;
+  --danger: #ff4f7e;
+  --line: rgba(46, 230, 200, 0.22);
+
+  /* --- type --- */
+  --font-display: 'Orbitron', 'Chakra Petch', system-ui, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* type scale (1.25 ratio) */
+  --fs-0: 0.78rem;
+  --fs-1: 0.95rem;
+  --fs-2: clamp(1rem, 1.4vw, 1.2rem);
+  --fs-3: clamp(1.2rem, 1.9vw, 1.55rem);
+  --fs-4: clamp(1.5rem, 2.6vw, 1.95rem);
+  --fs-5: clamp(1.95rem, 4vw, 2.9rem);
+  --fs-6: clamp(2.8rem, 8vw, 5rem);
+
+  /* --- spacing rhythm --- */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-8: 3rem;
+
+  /* --- radius / motion --- */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-med: 240ms;
+  --dur-slow: 420ms;
+
+  font-family: var(--font-mono);
+  color: var(--text);
 }
 
 * {
@@ -19,8 +72,12 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -10%, rgba(255, 79, 216, 0.12), transparent 60%),
+    radial-gradient(ellipse 100% 70% at 50% 110%, rgba(46, 230, 200, 0.1), transparent 60%),
+    var(--bg);
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }
 
 #stage {
@@ -29,7 +86,149 @@ body {
   height: 100vh;
 }
 
-/* Full-screen message/prompt layer (start screen, loading, errors). */
+/* --- CRT overlay: scanlines + vignette, drawn above everything, inert ------ */
+.crt {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+.crt::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(8, 6, 20, 0.35) 3px,
+    rgba(8, 6, 20, 0.35) 3px
+  );
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  animation: crt-flicker 5s steps(60) infinite;
+}
+.crt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(5, 4, 14, 0.55) 100%);
+}
+@keyframes crt-flicker {
+  0%,
+  97%,
+  100% {
+    opacity: 0.5;
+  }
+  98% {
+    opacity: 0.38;
+  }
+  99% {
+    opacity: 0.55;
+  }
+}
+
+/* =====================================================================
+ * Components
+ * =================================================================== */
+
+/* Wordmark — gradient retro lettering reused on menu / loader / share card. */
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, var(--teal), var(--magenta) 85%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 18px rgba(46, 230, 200, 0.35));
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.8rem 1.7rem;
+  font-family: var(--font-display);
+  font-size: var(--fs-1);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--base);
+  background: linear-gradient(135deg, var(--teal), #46f0d6);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(46, 230, 200, 0.6), 0 6px 24px rgba(46, 230, 200, 0.28);
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1px rgba(46, 230, 200, 0.9), 0 10px 32px rgba(46, 230, 200, 0.42);
+}
+.btn:active {
+  transform: translateY(0) scale(0.99);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--magenta);
+  outline-offset: 3px;
+}
+
+.btn--ghost {
+  color: var(--text);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.btn--ghost:hover {
+  background: rgba(46, 230, 200, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(46, 230, 200, 0.7);
+}
+
+/* Card — the menu game-card and any future paneled surface. */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-5);
+  text-align: left;
+  background: linear-gradient(160deg, var(--surface-hi), var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    transform var(--dur-med) var(--ease-out),
+    border-color var(--dur-med) var(--ease-out),
+    box-shadow var(--dur-med) var(--ease-out);
+}
+.card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg, rgba(46, 230, 200, 0.12), transparent 45%);
+  opacity: 0;
+  transition: opacity var(--dur-med) var(--ease-out);
+}
+.card:hover,
+.card:focus-visible {
+  transform: translateY(-4px);
+  border-color: rgba(46, 230, 200, 0.7);
+  box-shadow: 0 14px 40px rgba(8, 6, 24, 0.6), 0 0 26px rgba(46, 230, 200, 0.18);
+  outline: none;
+}
+.card:hover::after,
+.card:focus-visible::after {
+  opacity: 1;
+}
+
+/* =====================================================================
+ * Full-screen message layer (start screen / errors). Phase 5 menu,
+ * calibration, and game-over screens build on these same tokens.
+ * =================================================================== */
 .overlay {
   position: fixed;
   inset: 0;
@@ -37,80 +236,187 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  padding: 2rem;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
   text-align: center;
-  background: radial-gradient(circle at 50% 40%, rgba(0, 230, 255, 0.08), rgba(7, 8, 13, 0.92) 70%);
-  backdrop-filter: blur(2px);
+  z-index: 40;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(46, 230, 200, 0.08), transparent 60%),
+    rgba(12, 10, 28, 0.86);
+  backdrop-filter: blur(3px);
+  animation: fade-in var(--dur-med) var(--ease-out);
 }
-
 .overlay.show {
   display: flex;
 }
 
 .overlay h1 {
-  font-size: clamp(2rem, 6vw, 3.5rem);
-  letter-spacing: 0.08em;
+  font-family: var(--font-display);
+  font-size: var(--fs-5);
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--neon);
-  text-shadow: 0 0 18px rgba(0, 230, 255, 0.55);
+  color: var(--teal);
+  text-shadow: 0 0 22px rgba(46, 230, 200, 0.5);
 }
 
 .overlay p {
-  max-width: 32rem;
+  max-width: 34rem;
+  font-size: var(--fs-2);
+  line-height: 1.55;
   color: var(--muted);
-  line-height: 1.5;
 }
 
 .overlay .error-title {
-  color: var(--accent);
-  text-shadow: 0 0 18px rgba(255, 46, 136, 0.5);
+  color: var(--danger);
+  text-shadow: 0 0 22px rgba(255, 79, 126, 0.5);
 }
 
-.overlay button {
-  margin-top: 0.5rem;
-  padding: 0.85rem 1.8rem;
-  font: inherit;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--bg);
-  background: var(--neon);
-  border: none;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* =====================================================================
+ * Model-load screen with personality (Phase 5) — animated wordmark,
+ * sweeping scanline, rotating tips. CSS-animated so it keeps moving even
+ * while the main thread is busy loading the MediaPipe model.
+ * =================================================================== */
+.loader {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  text-align: center;
+  z-index: 50;
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 35%, rgba(255, 79, 216, 0.1), transparent 65%),
+    rgba(12, 10, 28, 0.94);
+}
+.loader.show {
+  display: flex;
+}
+
+.loader__logo {
+  position: relative;
+  font-size: var(--fs-6);
+  line-height: 1;
+  animation: logo-pulse 2.4s var(--ease-in-out) infinite;
+}
+/* sweeping highlight bar = the "always moving" element */
+.loader__logo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 40%, rgba(234, 230, 255, 0.55) 50%, transparent 60%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  mix-blend-mode: screen;
+  animation: logo-sweep 2.2s linear infinite;
+}
+@keyframes logo-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 16px rgba(46, 230, 200, 0.35));
+  }
+  50% {
+    filter: drop-shadow(0 0 30px rgba(255, 79, 216, 0.55));
+  }
+}
+@keyframes logo-sweep {
+  from {
+    background-position: -120% 0;
+  }
+  to {
+    background-position: 220% 0;
+  }
+}
+
+.loader__bar {
+  width: min(18rem, 60vw);
+  height: 4px;
   border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 0 22px rgba(0, 230, 255, 0.5);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  background: rgba(155, 147, 201, 0.22);
+  overflow: hidden;
+}
+.loader__bar::before {
+  content: '';
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal), var(--magenta));
+  animation: bar-slide 1.3s var(--ease-in-out) infinite;
+}
+@keyframes bar-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
 }
 
-.overlay button:hover {
-  transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 0 30px rgba(0, 230, 255, 0.7);
+.loader__tip {
+  min-height: 2.6em;
+  max-width: 30rem;
+  font-size: var(--fs-2);
+  line-height: 1.5;
+  color: var(--muted);
+  transition: opacity var(--dur-med) var(--ease-out);
+}
+.loader__tip b {
+  color: var(--teal);
+  font-weight: 700;
+}
+.loader__label {
+  font-size: var(--fs-0);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
-.overlay button:active {
-  transform: translateY(0) scale(0.99);
+@media (prefers-reduced-motion: reduce) {
+  .crt::before,
+  .loader__logo,
+  .loader__logo::after,
+  .loader__bar::before,
+  .overlay {
+    animation: none;
+  }
 }
 
-/* Debug tuning panel (Phase 2). Toggled with the D key. */
+/* =====================================================================
+ * Debug tuning panel (Phase 2). Toggled with the D key. Restyled to tokens.
+ * =================================================================== */
 .debug-panel {
   position: fixed;
   top: 0.75rem;
   right: 0.75rem;
   width: 16rem;
-  padding: 0.75rem 0.9rem;
-  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  padding: var(--sp-3) var(--sp-4);
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   color: var(--text);
-  background: rgba(7, 8, 13, 0.82);
-  border: 1px solid rgba(0, 230, 255, 0.35);
-  border-radius: 0.5rem;
-  backdrop-filter: blur(3px);
-  z-index: 10;
+  background: rgba(12, 10, 28, 0.84);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(4px);
+  z-index: 60;
   user-select: none;
 }
 
 .dbg-title {
-  color: var(--neon);
+  color: var(--teal);
   letter-spacing: 0.06em;
   margin-bottom: 0.6rem;
   font-size: 0.72rem;
@@ -134,22 +440,22 @@ body {
 
 .dbg-val {
   text-align: right;
-  color: var(--neon);
+  color: var(--teal);
 }
 
 .dbg-row input[type='range'] {
   width: 100%;
-  accent-color: var(--neon);
+  accent-color: var(--teal);
 }
 
 .dbg-row input[type='checkbox'] {
-  accent-color: var(--accent);
+  accent-color: var(--magenta);
 }
 
 .dbg-status {
   margin-top: 0.6rem;
   padding-top: 0.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--accent);
+  border-top: 1px solid rgba(234, 230, 255, 0.1);
+  color: var(--magenta);
   font-size: 0.72rem;
 }

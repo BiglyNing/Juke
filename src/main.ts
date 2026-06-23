@@ -9,6 +9,8 @@ import { smoothEMA, binarize, erode, type Grid, type BinaryMask } from './engine
 import { overBudget } from './engine/budget';
 import { FixtureRecorder, downloadFixture, type Fixture } from './engine/fixture';
 import { showOverlay, hideOverlay } from './shell/overlay';
+import { showLoadingScreen, hideLoadingScreen } from './shell/loadingScreen';
+import { COLORS, FONT, rgba } from './shell/theme';
 import {
   debugParams,
   isDebugOn,
@@ -112,8 +114,9 @@ function drawIdle(ctx: CanvasRenderingContext2D, now: number): void {
   const pulse = 0.5 + 0.5 * Math.sin(now / 900);
   const r = Math.max(w, h) * (0.25 + pulse * 0.05);
   const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, r);
-  g.addColorStop(0, `rgba(0, 230, 255, ${0.05 + pulse * 0.05})`);
-  g.addColorStop(1, 'rgba(7, 8, 13, 0)');
+  g.addColorStop(0, rgba(COLORS.teal, 0.05 + pulse * 0.06));
+  g.addColorStop(0.6, rgba(COLORS.magenta, 0.03 + pulse * 0.03));
+  g.addColorStop(1, rgba(COLORS.bg, 0));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 }
@@ -122,9 +125,9 @@ function drawHud(ctx: CanvasRenderingContext2D, stats: FrameStats): void {
   const pad = Math.round(ctx.canvas.width / 80);
   const frameMs = 1000 / stats.fps;
   const over = overBudget(frameMs, stats.inferenceMs);
-  ctx.font = `${Math.round(ctx.canvas.width / 90)}px ui-monospace, monospace`;
+  ctx.font = `${Math.round(ctx.canvas.width / 90)}px ${FONT.mono}`;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = over ? '#ff2e88' : 'rgba(232, 236, 244, 0.85)';
+  ctx.fillStyle = over ? COLORS.danger : rgba(COLORS.text, 0.85);
   ctx.fillText(
     `${stats.fps.toFixed(0)} fps · frame ${frameMs.toFixed(1)}ms · inference ${stats.inferenceMs.toFixed(1)}ms` +
       (over ? '  ⚠ OVER BUDGET' : ''),
@@ -256,11 +259,12 @@ async function start(): Promise<void> {
     return;
   }
 
+  showLoadingScreen();
   try {
-    showOverlay({ title: 'Loading pose model…', body: 'First load downloads the model — just a moment.' });
     const pose = await createPosePerception();
     liveProducer = createLiveProducer(camera, pose);
   } catch (err) {
+    hideLoadingScreen();
     camera.stop();
     const message = err instanceof PerceptionError ? err.message : String(err);
     showOverlay({
@@ -272,6 +276,7 @@ async function start(): Promise<void> {
     return;
   }
 
+  hideLoadingScreen();
   hideOverlay();
   engine.setProducer(liveProducer);
   await engine.setActiveGame('holeInWall'); // swapping the active game is this one line
