@@ -66,6 +66,12 @@ export class Engine {
     this.accumulator = 0;
   }
 
+  /** Empty the active-game slot (e.g. returning to the menu). */
+  clearActiveGame(): void {
+    this.game = null;
+    this.accumulator = 0;
+  }
+
   get activeGame(): JukeGame | null {
     return this.game;
   }

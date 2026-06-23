@@ -8,12 +8,22 @@
  */
 
 import type { PerceptionFrame } from './frame';
+import type { BodyProfile } from './calibration';
 
 /** Perception capabilities a game requires; drives lazy model loading. */
 export type Need = 'pose' | 'hands';
 
 /** How physical the game is; drives the calibration branch (Phase 5). */
 export type Intensity = 'standing' | 'seated';
+
+/**
+ * What the shell's calibration step hands a game before a run starts (Phase 5).
+ * Standing games build their level from `profile`; seated (hand) games need no
+ * body profile, so it's null for them.
+ */
+export interface CalibrationResult {
+  profile: BodyProfile | null;
+}
 
 export interface JukeGame {
   readonly id: string;
@@ -24,6 +34,13 @@ export interface JukeGame {
 
   /** Called once when the game becomes active (after `reset`). Allocate here. */
   init(): void;
+  /**
+   * Optional (Phase 5): receive the shell's calibration output once the player
+   * is framed and the countdown has finished — i.e. the moment play begins.
+   * Standing games build their first level from `result.profile`. Games that
+   * need no calibration data can omit this.
+   */
+  configure?(result: CalibrationResult): void;
   /** Advance simulation by a fixed `dt` (ms). Read perception from `frame`. */
   update(frame: PerceptionFrame, dt: number): void;
   /** Draw the game. The engine clears the canvas before this and draws the HUD after. */

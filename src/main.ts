@@ -19,6 +19,7 @@ import {
   setRecordingStatus,
 } from './shell/debug';
 import { containRect, drawMirrored, type Rect } from './render/canvas';
+import { Shell } from './shell/app';
 import sampleFixtureJson from './engine/__fixtures__/sample.json';
 
 // Registering a game is a side-effect import. Adding a game = import its module.
@@ -40,11 +41,15 @@ window.addEventListener('resize', resize);
 resize();
 
 // ---------------------------------------------------------------------------
-// Engine: one active-game slot, fed by whichever producer is set. The shell
-// (this file) owns the always-on overlay drawn on top of the active game.
+// Engine + shell. The engine owns the RAF loop and the active-game slot; the
+// shell (shell/app.ts) owns the lifecycle (menu → calibrate → countdown → play
+// → gameover) and advances each frame via the engine's overlay hook. main.ts
+// keeps only the dev instrumentation: the always-on FPS/budget readout, the
+// debug collision grid, and fixture record/replay.
 // ---------------------------------------------------------------------------
 
 const engine = new Engine(canvas, drawOverlay);
+const shell = new Shell(engine);
 engine.start();
 
 let liveProducer: Producer | null = null;
@@ -56,8 +61,9 @@ const gridCtx = gridCanvas.getContext('2d')!;
 let debugPrevGrid: Grid | null = null;
 
 // ---------------------------------------------------------------------------
-// Overlay: idle pulse when there's no frame; otherwise HUD + (debug) collision
-// grid / visibility scores + fixture recording. Drawn after the active game.
+// Per-frame overlay (engine hook): advance the shell lifecycle + draw its idle
+// backdrop, then the always-on dev instrumentation — debug collision grid /
+// visibility scores, fixture recording, and the FPS/budget readout — on top.
 // ---------------------------------------------------------------------------
 
 function drawOverlay(
@@ -65,38 +71,38 @@ function drawOverlay(
   frame: PerceptionFrame | null,
   stats: FrameStats,
 ): void {
-  if (!frame) {
-    drawIdle(ctx, stats.now);
-    debugPrevGrid = null;
-    return;
-  }
+  shell.tick(ctx, frame, stats);
 
-  const srcW = frame.video?.videoWidth || frame.maskW || ctx.canvas.width;
-  const srcH = frame.video?.videoHeight || frame.maskH || ctx.canvas.height;
-  const rect = containRect(srcW, srcH, ctx.canvas.width, ctx.canvas.height);
+  if (frame) {
+    const srcW = frame.video?.videoWidth || frame.maskW || ctx.canvas.width;
+    const srcH = frame.video?.videoHeight || frame.maskH || ctx.canvas.height;
+    const rect = containRect(srcW, srcH, ctx.canvas.width, ctx.canvas.height);
 
-  if (isDebugOn() && frame.silhouetteMask) {
-    const grid = maskGrid(frame)!;
-    const smoothed = smoothEMA(debugPrevGrid, grid, debugParams.alpha);
-    debugPrevGrid = smoothed;
-    if (debugParams.showGrid) {
-      drawDebugGrid(ctx, erode(binarize(smoothed, 0.5), debugParams.erodePx), rect);
+    if (isDebugOn() && frame.silhouetteMask) {
+      const grid = maskGrid(frame)!;
+      const smoothed = smoothEMA(debugPrevGrid, grid, debugParams.alpha);
+      debugPrevGrid = smoothed;
+      if (debugParams.showGrid) {
+        drawDebugGrid(ctx, erode(binarize(smoothed, 0.5), debugParams.erodePx), rect);
+      }
+      if (frame.pose) drawVisibilityScores(ctx, frame.pose);
+    } else {
+      debugPrevGrid = null;
     }
-    if (frame.pose) drawVisibilityScores(ctx, frame.pose);
+
+    if (recorder.active && frame.silhouetteMask) {
+      const full = recorder.capture(maskGrid(frame)!, frame.pose, frame.dt);
+      setRecordingStatus(`recording… ${recorder.count} frames`);
+      if (full) {
+        downloadFixture(recorder.toFixture(), 'juke-fixture.json');
+        setRecordingStatus(`saved ${recorder.count}-frame fixture ✓`);
+      }
+    }
   } else {
     debugPrevGrid = null;
   }
 
-  if (recorder.active && frame.silhouetteMask) {
-    const full = recorder.capture(maskGrid(frame)!, frame.pose, frame.dt);
-    setRecordingStatus(`recording… ${recorder.count} frames`);
-    if (full) {
-      downloadFixture(recorder.toFixture(), 'juke-fixture.json');
-      setRecordingStatus(`saved ${recorder.count}-frame fixture ✓`);
-    }
-  }
-
-  drawHud(ctx, stats);
+  drawFpsHud(ctx, stats);
 
   if (debugParams.stress) busyWait(40); // force the budget alarm for testing
 }
@@ -108,20 +114,7 @@ function busyWait(ms: number): void {
   }
 }
 
-function drawIdle(ctx: CanvasRenderingContext2D, now: number): void {
-  const w = ctx.canvas.width;
-  const h = ctx.canvas.height;
-  const pulse = 0.5 + 0.5 * Math.sin(now / 900);
-  const r = Math.max(w, h) * (0.25 + pulse * 0.05);
-  const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, r);
-  g.addColorStop(0, rgba(COLORS.teal, 0.05 + pulse * 0.06));
-  g.addColorStop(0.6, rgba(COLORS.magenta, 0.03 + pulse * 0.03));
-  g.addColorStop(1, rgba(COLORS.bg, 0));
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-}
-
-function drawHud(ctx: CanvasRenderingContext2D, stats: FrameStats): void {
+function drawFpsHud(ctx: CanvasRenderingContext2D, stats: FrameStats): void {
   const pad = Math.round(ctx.canvas.width / 80);
   const frameMs = 1000 / stats.fps;
   const over = overBudget(frameMs, stats.inferenceMs);
@@ -146,9 +139,9 @@ function drawDebugGrid(ctx: CanvasRenderingContext2D, mask: BinaryMask, rect: Re
   for (let i = 0; i < w * h; i++) {
     if (mask.data[i]) {
       const o = i * 4;
-      img.data[o] = 255; // R
-      img.data[o + 1] = 46; // G
-      img.data[o + 2] = 136; // B
+      img.data[o] = 255; // R  (magenta accent)
+      img.data[o + 1] = 79; // G
+      img.data[o + 2] = 216; // B
       img.data[o + 3] = 170; // A
     }
   }
@@ -185,13 +178,13 @@ const LANDMARK_LABELS = [
 
 function drawVisibilityScores(ctx: CanvasRenderingContext2D, pose: { visibility?: number }[]): void {
   const size = Math.max(10, Math.round(ctx.canvas.width / 150));
-  ctx.font = `${size}px ui-monospace, monospace`;
+  ctx.font = `${size}px ${FONT.mono}`;
   ctx.textBaseline = 'top';
   const x = ctx.canvas.width - Math.round(ctx.canvas.width / 4.5);
   let y = Math.round(ctx.canvas.height / 3);
   for (let i = 0; i < pose.length; i++) {
     const v = pose[i].visibility ?? 0;
-    ctx.fillStyle = v >= 0.5 ? 'rgba(0, 230, 255, 0.9)' : 'rgba(255, 46, 136, 0.8)';
+    ctx.fillStyle = v >= 0.5 ? rgba(COLORS.teal, 0.9) : rgba(COLORS.danger, 0.8);
     ctx.fillText(`${(LANDMARK_LABELS[i] ?? i).toString().padEnd(10)} ${v.toFixed(2)}`, x, y);
     y += size + 2;
   }
@@ -234,8 +227,7 @@ window.addEventListener('drop', async (e) => {
 /** Swap the live camera for a replayed fixture — same loop, no webcam. */
 async function replayFixture(fixture: Fixture): Promise<void> {
   hideOverlay();
-  engine.setProducer(createFixtureProducer(fixture, { loop: true }));
-  await engine.setActiveGame('test');
+  await shell.enterReplay(createFixtureProducer(fixture, { loop: true }));
 }
 
 // ---------------------------------------------------------------------------
@@ -278,12 +270,12 @@ async function start(): Promise<void> {
 
   hideLoadingScreen();
   hideOverlay();
-  engine.setProducer(liveProducer);
-  await engine.setActiveGame('holeInWall'); // swapping the active game is this one line
+  shell.attachProducer(liveProducer);
+  await shell.enterMenu(); // the shell takes over: menu → calibrate → countdown → play
 }
 
 showOverlay({
   title: 'Juke',
-  body: 'A webcam motion arcade. Stand back so your whole body is in frame — a wall with a gap will appear; line your silhouette up with the hole. Press D for the debug overlay.',
+  body: 'A webcam motion arcade — your body is the controller. Enable your camera, pick a game from the menu, get framed, and play. Press D for the debug overlay.',
   action: { label: 'Enable camera & start', onClick: start },
 });

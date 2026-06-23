@@ -1,25 +1,29 @@
 /**
- * Hole-in-the-Wall — the flagship game (Phase 4).
+ * Hole-in-the-Wall — the flagship game (Phase 4, refactored to the Phase 5 shell
+ * contract).
  *
- * Flow: calibrate → (approach → result)* → over.
+ * The shell now owns the lifecycle: it runs calibration, hands the game a
+ * {@link CalibrationResult} via `configure`, then counts down and starts play.
+ * This file is just the wall loop: (approach → result)* → dead.
  *
- * Calibration measures the player (position, size, which limbs are visible) into
- * a BodyProfile; every wall's pose-shaped hole is then generated *from that
- * profile*, so the holes are always the player's size/position and skip the legs
- * if the player can't fit them in frame. A wall rushes you (scales up for fake
- * depth); at the crossing window your eroded silhouette is judged against the
- * wall's SOLID region with maskOverlap (best ratio over the window vs TOL). Fit →
- * score++ and the next wall; don't fit → squashed, game over.
+ *   waiting  — armed but not started; renders the live silhouette preview the
+ *              shell shows behind its calibration + countdown screens.
+ *   approach — a wall rushes you (scales up for fake depth).
+ *   result   — PASS/SQUASHED verdict lingers, then the next wall or death.
+ *   dead     — run over; the shell reads `isOver()` and shows GAME OVER.
  *
- * Coordinates: the hole is built and judged in raw camera space (same as the
- * silhouette mask), and rendered mirrored to match the selfie-view silhouette.
+ * Every wall's pose-shaped hole is generated from the calibrated BodyProfile, so
+ * holes are always the player's size/position and skip the legs if the player
+ * can't fit them in frame. At the crossing window the eroded silhouette is judged
+ * against the wall's SOLID region with maskOverlap (best ratio over the window vs
+ * TOL). Judged + rendered in raw camera space, mirrored to match the selfie view.
  */
 
-import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
+import { register, type JukeGame, type Need, type Intensity, type CalibrationResult } from '../engine/game';
 import { type PerceptionFrame, maskGrid } from '../engine/frame';
 import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
 import { limbsFramed } from '../engine/pose';
-import { Calibrator, canCalibrate, type BodyProfile } from '../engine/calibration';
+import { type BodyProfile } from '../engine/calibration';
 import { holeFromProfile, pickVariation, rasterizeSolid, type Hole, type Variation } from './wall';
 import {
   perceptionRect,
@@ -29,12 +33,13 @@ import {
 } from '../render/perception';
 import type { Rect } from '../render/canvas';
 import { debugParams, isDebugOn } from '../shell/debug';
+import { COLORS, FONT, rgba } from '../shell/theme';
 
 const RESULT_MS = 950; // how long the PASS/SQUASHED verdict lingers
 const FAR_SCALE = 0.32; // how small the wall starts (fake depth)
 const MIN_PLAYER_AREA = 0.012; // fraction of cells that must be "you" to count
 
-type Phase = 'calibrate' | 'approach' | 'result' | 'over';
+type Phase = 'waiting' | 'approach' | 'result' | 'dead';
 
 // Reused offscreen canvas for punching the pose hole out of the wall panel.
 const wallCanvas = document.createElement('canvas');
@@ -46,8 +51,7 @@ class HoleInWall implements JukeGame {
   readonly needs: Need[] = ['pose'];
   readonly intensity: Intensity = 'standing';
 
-  private phase: Phase = 'calibrate';
-  private calibrator = new Calibrator();
+  private phase: Phase = 'waiting';
   private profile: BodyProfile | null = null;
 
   private variation: Variation | null = null;
@@ -71,8 +75,7 @@ class HoleInWall implements JukeGame {
   }
 
   reset(): void {
-    this.phase = 'calibrate';
-    this.calibrator.reset();
+    this.phase = 'waiting';
     this.profile = null;
     this.hole = null;
     this.variation = null;
@@ -85,31 +88,21 @@ class HoleInWall implements JukeGame {
     this.scoreValue = 0;
   }
 
-  /** Throw away the body profile and recalibrate (the player moved / resized). */
-  recalibrate(): void {
-    this.phase = 'calibrate';
-    this.calibrator.reset();
-    this.profile = null;
-    this.hole = null;
+  /** Receive the shell's calibration profile and start the first wall. */
+  configure(result: CalibrationResult): void {
+    this.profile = result.profile;
+    if (this.profile) this.startWall(null);
+    else this.phase = 'dead'; // a standing game can't run without a body profile
   }
 
   update(frame: PerceptionFrame, dt: number): void {
-    if (this.phase === 'over') return;
-
-    if (this.phase === 'calibrate') {
-      const profile = this.calibrator.add(frame.pose);
-      if (profile) {
-        this.profile = profile;
-        this.startWall(null);
-      }
-      return;
-    }
+    if (this.phase === 'waiting' || this.phase === 'dead') return;
 
     if (this.phase === 'result') {
       this.resultTimer -= dt;
       if (this.resultTimer <= 0) {
         if (this.lastPass) this.startWall(this.variation);
-        else this.phase = 'over';
+        else this.phase = 'dead';
       }
       return;
     }
@@ -171,12 +164,12 @@ class HoleInWall implements JukeGame {
     const rect = perceptionRect(ctx, frame);
     if (frame.video) drawCameraFeed(ctx, frame.video, rect);
 
-    if (this.phase === 'calibrate') {
+    // `waiting` = the live preview the shell shows behind calibration/countdown.
+    if (this.phase === 'waiting') {
       if (frame.silhouetteMask) {
         drawSilhouetteMask(ctx, frame.silhouetteMask, frame.maskW, frame.maskH, rect, 0.5);
       }
       if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
-      this.drawCalibration(ctx, frame);
       return;
     }
 
@@ -186,7 +179,7 @@ class HoleInWall implements JukeGame {
     }
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
     this.drawFraming(ctx, frame);
-    this.drawHud(ctx);
+    this.drawGameplayText(ctx);
   }
 
   score(): number {
@@ -194,56 +187,21 @@ class HoleInWall implements JukeGame {
   }
 
   isOver(): boolean {
-    return this.phase === 'over';
+    return this.phase === 'dead';
   }
 
   // --- rendering -----------------------------------------------------------
 
-  private drawCalibration(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void {
-    const cw = ctx.canvas.width;
-    const ch = ctx.canvas.height;
-    const ready = canCalibrate(frame.pose);
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    ctx.font = `bold ${Math.round(cw / 26)}px ui-monospace, monospace`;
-    ctx.fillStyle = 'rgba(0, 230, 255, 0.95)';
-    ctx.fillText('CALIBRATING', cw / 2, ch * 0.46);
-
-    ctx.font = `${Math.round(cw / 56)}px ui-monospace, monospace`;
-    ctx.fillStyle = 'rgba(232, 236, 244, 0.9)';
-    ctx.fillText(
-      ready
-        ? 'Hold still — learning your shape and size'
-        : 'Get your shoulders and hips in frame, facing the camera',
-      cw / 2,
-      ch * 0.53,
-    );
-
-    // progress bar
-    const w = cw * 0.36;
-    const h = Math.max(6, ch * 0.012);
-    const x = (cw - w) / 2;
-    const y = ch * 0.58;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(0, 230, 255, 0.9)';
-    ctx.fillRect(x, y, w * this.calibrator.progress, h);
-    ctx.restore();
-  }
-
   /** Corner framing gate: are the limbs this body uses in frame? */
   private drawFraming(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void {
-    if (this.phase === 'over') return;
     const needLegs = this.profile?.hasLegs ?? true;
     const f = frame.pose ? limbsFramed(frame.pose) : null;
     const ok = f ? (needLegs ? f.allVisible : f.wristL && f.wristR) : false;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.font = `${Math.round(ctx.canvas.width / 64)}px ui-monospace, monospace`;
-    ctx.fillStyle = ok ? 'rgba(74, 240, 160, 0.85)' : 'rgba(255, 190, 70, 0.95)';
+    ctx.font = `${Math.round(ctx.canvas.width / 64)}px ${FONT.mono}`;
+    ctx.fillStyle = ok ? rgba(COLORS.ok, 0.85) : rgba(COLORS.warn, 0.95);
     ctx.fillText(
       ok ? '✓ in position' : needLegs ? 'show both hands & both feet' : 'show both hands',
       ctx.canvas.width / 2,
@@ -272,7 +230,7 @@ class HoleInWall implements JukeGame {
     }
     wallCtx.clearRect(0, 0, wallCanvas.width, wallCanvas.height);
     const panelAlpha = 0.4 + 0.5 * (this.z * this.z);
-    wallCtx.fillStyle = `rgba(18, 22, 42, ${panelAlpha})`;
+    wallCtx.fillStyle = rgba(COLORS.surface, panelAlpha);
     wallCtx.fillRect(sr.x, sr.y, sr.w, sr.h);
     wallCtx.globalCompositeOperation = 'destination-out';
     wallCtx.fillStyle = '#000'; // opaque -> fully clears the hole
@@ -283,10 +241,10 @@ class HoleInWall implements JukeGame {
 
     // Neon "target pose" stick-figure hint inside the hole; colored by live fit.
     const color = !inWindow
-      ? 'rgba(0, 230, 255, 0.9)'
+      ? rgba(COLORS.teal, 0.9)
       : this.liveRatio <= debugParams.tol
-        ? 'rgba(74, 240, 160, 0.95)'
-        : 'rgba(255, 46, 136, 0.95)';
+        ? rgba(COLORS.ok, 0.95)
+        : rgba(COLORS.danger, 0.95);
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineCap = 'round';
@@ -321,58 +279,37 @@ class HoleInWall implements JukeGame {
     }
   }
 
-  private drawHud(ctx: CanvasRenderingContext2D): void {
+  /** In-canvas gameplay text: the target pose name, the verdict flash, debug overlap. */
+  private drawGameplayText(ctx: CanvasRenderingContext2D): void {
     const cw = ctx.canvas.width;
     const ch = ctx.canvas.height;
     ctx.save();
     ctx.textAlign = 'center';
 
     ctx.textBaseline = 'top';
-    ctx.font = `${Math.round(cw / 36)}px ui-monospace, monospace`;
-    ctx.fillStyle = 'rgba(232, 236, 244, 0.95)';
-    ctx.fillText(`MATCH:  ${this.variation?.name ?? ''}`, cw / 2, Math.round(ch / 28));
-    ctx.font = `${Math.round(cw / 52)}px ui-monospace, monospace`;
-    ctx.fillStyle = 'rgba(155, 236, 255, 0.9)';
-    ctx.fillText(`Score ${this.scoreValue}`, cw / 2, Math.round(ch / 28) + Math.round(cw / 30));
+    ctx.font = `${Math.round(cw / 44)}px ${FONT.mono}`;
+    ctx.fillStyle = rgba(COLORS.text, 0.95);
+    ctx.fillText(`MATCH:  ${this.variation?.name ?? ''}`, cw / 2, Math.round(ch * 0.12));
 
     if (isDebugOn()) {
       const min = this.minRatio === Infinity ? 0 : this.minRatio;
-      ctx.font = `${Math.round(cw / 64)}px ui-monospace, monospace`;
-      ctx.fillStyle = 'rgba(232, 236, 244, 0.8)';
+      ctx.font = `${Math.round(cw / 64)}px ${FONT.mono}`;
+      ctx.fillStyle = rgba(COLORS.text, 0.8);
       ctx.fillText(
         `overlap ${this.liveRatio.toFixed(3)}  ·  best ${min.toFixed(3)}  ·  TOL ${debugParams.tol.toFixed(3)}`,
         cw / 2,
-        Math.round(ch / 28) + Math.round(cw / 16),
+        Math.round(ch * 0.12) + Math.round(cw / 30),
       );
     }
 
     if (this.phase === 'result') {
       ctx.textBaseline = 'middle';
-      ctx.font = `bold ${Math.round(cw / 16)}px ui-monospace, monospace`;
-      ctx.fillStyle = this.lastPass ? 'rgba(74, 240, 160, 0.95)' : 'rgba(255, 46, 136, 0.95)';
+      ctx.font = `bold ${Math.round(cw / 16)}px ${FONT.display}`;
+      ctx.fillStyle = this.lastPass ? rgba(COLORS.ok, 0.95) : rgba(COLORS.danger, 0.95);
       ctx.fillText(this.lastPass ? 'PASS ✓' : 'SQUASHED ✕', cw / 2, ch / 2);
-    }
-
-    if (this.phase === 'over') {
-      ctx.textBaseline = 'middle';
-      ctx.font = `bold ${Math.round(cw / 18)}px ui-monospace, monospace`;
-      ctx.fillStyle = 'rgba(255, 46, 136, 0.95)';
-      ctx.fillText('GAME OVER', cw / 2, ch / 2 - cw / 28);
-      ctx.font = `${Math.round(cw / 40)}px ui-monospace, monospace`;
-      ctx.fillStyle = 'rgba(232, 236, 244, 0.9)';
-      ctx.fillText(`Score ${this.scoreValue}  ·  press Enter to retry`, cw / 2, ch / 2 + cw / 40);
     }
     ctx.restore();
   }
 }
 
-const game = new HoleInWall();
-register(game);
-
-// Minimal lifecycle keys until the Phase 5 shell owns it: Enter restarts a dead
-// run; C recalibrates at any time (if you moved or changed distance).
-window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement) return;
-  if (e.key === 'Enter' && game.isOver()) game.reset();
-  else if (e.key.toLowerCase() === 'c') game.recalibrate();
-});
+register(new HoleInWall());
