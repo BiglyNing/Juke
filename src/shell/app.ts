@@ -20,6 +20,8 @@ import type { Producer } from '../engine/producer';
 import { Calibrator, canCalibrate } from '../engine/calibration';
 import { limbsFramed } from '../engine/pose';
 import { COLORS, rgba } from './theme';
+import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
+import { showOverlay, hideOverlay } from './overlay';
 import * as screens from './screens';
 
 type State = 'title' | 'menu' | 'calibrate' | 'countdown' | 'play' | 'gameover' | 'replay';
@@ -27,6 +29,7 @@ type State = 'title' | 'menu' | 'calibrate' | 'countdown' | 'play' | 'gameover' 
 /** Per-game menu blurb (the contract stays minimal, so copy lives here). */
 const BLURBS: Record<string, string> = {
   holeInWall: 'A wall with a person-shaped gap rushes you. Contort to fit — or get squashed.',
+  simonSays: 'Mimic the hand sign before the timer runs out. Seated and laptop-friendly — just show your hand.',
 };
 
 const SEATED_HOLD_MS = 1000; // hold a hand in view this long to pass seated calibration
@@ -51,6 +54,8 @@ export class Shell {
   private cdIndex = 0;
   private cdTimer = 0;
   private hudScore = -1;
+  /** True once the lazy hand model has loaded — so we only show its loader once. */
+  private handsReady = false;
 
   constructor(engine: Engine) {
     this.engine = engine;
@@ -109,8 +114,36 @@ export class Shell {
     this.game = game;
     screens.hideAll();
     // setActiveGame lazy-loads needs (e.g. the hand model) and resets+inits the
-    // game into its `waiting` phase, where it renders the live preview.
-    await this.engine.setActiveGame(id);
+    // game into its `waiting` phase, where it renders the live preview. Cover the
+    // first hand-model download (seated games only) with the loading screen so the
+    // menu→calibrate gap is never a dead frame. Body games never reach this.
+    const needsHands = game.needs.includes('hands');
+    if (needsHands && !this.handsReady) showLoadingScreen('Loading hand tracking…');
+    try {
+      await this.engine.setActiveGame(id);
+    } catch (err) {
+      // A model download failed (most likely the lazy hand model). Surface it
+      // and bounce back to the menu instead of stalling on a calibration screen
+      // that can never complete.
+      hideLoadingScreen();
+      showOverlay({
+        title: "Couldn't load that game",
+        body: err instanceof Error ? err.message : String(err),
+        error: true,
+        action: {
+          label: 'Back to menu',
+          onClick: () => {
+            hideOverlay();
+            void this.enterMenu();
+          },
+        },
+      });
+      return;
+    }
+    if (needsHands) {
+      this.handsReady = true;
+      hideLoadingScreen();
+    }
     this.calibrator.reset();
     this.seatedHoldMs = 0;
     this.result = null;
@@ -266,12 +299,15 @@ export class Shell {
 
   private onKey(e: KeyboardEvent): void {
     if (e.target instanceof HTMLInputElement) return;
-    if (this.state === 'gameover') {
-      if (e.key === 'Enter') void this.retry();
-      else if (e.key === 'Escape') void this.enterMenu();
-    } else if (this.state === 'play' && e.key === 'Escape') {
-      void this.enterMenu();
+    // Escape always backs out to the menu from any in-game state — so a player
+    // is never trapped (e.g. on a calibration screen they can't satisfy).
+    if (e.key === 'Escape') {
+      if (this.state === 'calibrate' || this.state === 'countdown' || this.state === 'play' || this.state === 'gameover') {
+        void this.enterMenu();
+      }
+      return;
     }
+    if (e.key === 'Enter' && this.state === 'gameover') void this.retry();
   }
 
   // --- idle backdrop ------------------------------------------------------

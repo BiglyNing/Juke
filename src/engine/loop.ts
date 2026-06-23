@@ -72,10 +72,6 @@ export class Engine {
     this.accumulator = 0;
   }
 
-  get activeGame(): JukeGame | null {
-    return this.game;
-  }
-
   start(): void {
     this.last = performance.now();
     const tick = (now: number): void => {

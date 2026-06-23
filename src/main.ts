@@ -24,6 +24,7 @@ import sampleFixtureJson from './engine/__fixtures__/sample.json';
 
 // Registering a game is a side-effect import. Adding a game = import its module.
 import './games/holeInWall';
+import './games/simonSays';
 import './games/testGame';
 
 // ---------------------------------------------------------------------------

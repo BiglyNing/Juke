@@ -1,8 +1,9 @@
 /**
- * Minimal full-screen message layer for the start prompt, loading states, and
- * graceful failure screens. Phase 5 replaces/extends this with the real menu +
- * state machine; for now it just needs to never leave the user staring at a
- * frozen canvas with no explanation.
+ * Full-screen message layer for the title/start prompt and graceful failure
+ * screens (camera unavailable, model-load errors). The Phase 5 shell
+ * (shell/app.ts + screens.ts) owns the menu, calibration, HUD, and game-over;
+ * this layer is what it falls back to for the entry point and hard errors, so
+ * the user is never left staring at a frozen canvas with no explanation.
  */
 
 const el = document.getElementById('overlay') as HTMLDivElement;

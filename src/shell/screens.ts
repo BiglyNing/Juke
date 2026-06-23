@@ -194,7 +194,7 @@ export function setHudScore(score: number): void {
   hudScoreEl.classList.add('pop');
 }
 
-export function hideHud(): void {
+function hideHud(): void {
   hudEl?.classList.remove('show');
 }
 

@@ -48,9 +48,11 @@ export function createLiveProducer(camera: CameraHandle, pose: PosePerception): 
           .then((h) => {
             hands = h;
           })
-          .catch(() => {
-            // Leave hands null — the game still runs; Phase 6 surfaces this to the user.
+          .catch((err) => {
+            // Reset so a later attempt can retry, then propagate: the shell turns
+            // this into a "couldn't load that game" message and returns to the menu.
             handsLoading = null;
+            throw err;
           });
       }
       await handsLoading;
@@ -91,6 +93,13 @@ export function createLiveProducer(camera: CameraHandle, pose: PosePerception): 
         maskH,
         pose: poseResult.landmarks.length > 0 ? (poseResult.landmarks[0] as Point[]) : null,
         hands: handResult && handResult.landmarks.length > 0 ? (handResult.landmarks as Point[][]) : null,
+        gestures:
+          handResult && handResult.gestures.length > 0
+            ? handResult.gestures.map((g) => ({
+                name: g[0]?.categoryName ?? 'None',
+                score: g[0]?.score ?? 0,
+              }))
+            : null,
         video,
         dt,
       };
@@ -124,6 +133,7 @@ export function createFixtureProducer(fixture: Fixture, opts: { loop?: boolean }
         maskH: fr.maskH,
         pose: fr.pose ?? null,
         hands: null,
+        gestures: null,
         video: null,
         dt: fr.dt,
       };

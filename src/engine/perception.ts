@@ -12,9 +12,9 @@
 import {
   FilesetResolver,
   PoseLandmarker,
-  HandLandmarker,
+  GestureRecognizer,
   type PoseLandmarkerResult,
-  type HandLandmarkerResult,
+  type GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
 
 // Pin the WASM runtime to the installed package version so the npm dep and the
@@ -26,8 +26,11 @@ const WASM_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_
 // if perception is too slow, this and the camera resolution are the first dials.
 const POSE_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-const HAND_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+// The Gesture Recognizer bundles hand landmarks + a classifier over the ~7
+// built-in gesture labels (Open_Palm, Closed_Fist, Victory, Thumb_Up/Down,
+// Pointing_Up, ILoveYou) — exactly the easy tier of Hand Simon-Says (Phase 6).
+const GESTURE_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 
 export class PerceptionError extends Error {
   constructor(message: string) {
@@ -63,7 +66,7 @@ export interface PosePerception {
 }
 
 export interface HandPerception {
-  detect(video: HTMLVideoElement, timestampMs: number): HandLandmarkerResult;
+  detect(video: HTMLVideoElement, timestampMs: number): GestureRecognizerResult;
   close(): void;
 }
 
@@ -93,13 +96,15 @@ export async function createPosePerception(): Promise<PosePerception> {
 
 /**
  * Lazy-loaded hand model — created only when a game declares `needs: ['hands']`
- * (Hand Simon-Says, Phase 6). Body games must never call this.
+ * (Hand Simon-Says, Phase 6). Body games must never call this. Uses the Gesture
+ * Recognizer so the result carries both hand landmarks and the built-in gesture
+ * label the game matches against.
  */
 export async function createHandPerception(): Promise<HandPerception> {
-  let landmarker: HandLandmarker;
+  let recognizer: GestureRecognizer;
   try {
-    landmarker = await HandLandmarker.createFromOptions(await vision(), {
-      baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
+    recognizer = await GestureRecognizer.createFromOptions(await vision(), {
+      baseOptions: { modelAssetPath: GESTURE_MODEL_URL, delegate: 'GPU' },
       runningMode: 'VIDEO',
       numHands: 1,
     });
@@ -113,7 +118,7 @@ export async function createHandPerception(): Promise<HandPerception> {
 
   const tick = monotonic();
   return {
-    detect: (video, ts) => landmarker.detectForVideo(video, tick(ts)),
-    close: () => landmarker.close(),
+    detect: (video, ts) => recognizer.recognizeForVideo(video, tick(ts)),
+    close: () => recognizer.close(),
   };
 }

@@ -21,6 +21,33 @@ Legend for each phase: **Goal** · **Why here** · **Tasks** · **Exit criteria*
 
 ---
 
+## Build status (living)
+
+Phases are checked off as their exit criteria are met. **P0–P6 are in and verified** (production build + 34 unit tests green); the live-webcam parts of each exit criterion are validated by hand, not in CI.
+
+| Phase | Status | Notes |
+| --- | --- | --- |
+| P0 — skeleton & dev loop | ✅ done | Vanilla TS + Vite, GitHub Pages deploy wired |
+| P1 — perception foundation | ✅ done | Pose Landmarker + segmentation mask; live FPS/inference readout |
+| P2 — debug harness & utilities | ✅ done | Overlay + sliders, tested mask/pose math, fixture record + headless replay |
+| P3 — engine contract & loop | ✅ done | `JukeGame` + registry + fixed-timestep loop + `Producer` seam |
+| P4 — minimal Hole-in-the-Wall | ✅ done | Profile-fitted walls, `maskOverlap` judging, leniency dials |
+| P5 — game shell | ✅ done | CRT-vaporwave design system, menu, calibration, countdown, HUD, game-over, model-load screen |
+| P6 — Hand Simon-Says | ✅ done | Seated gesture game on the Gesture Recognizer |
+| P7 — juice layer | ⬜ next | Audio + crush-moment stack + GIF capture path |
+| P8 — share card & leaderboard | ⬜ | Client-side, no backend |
+| P9 — submission artifacts | ⬜ | README GIF, demo video, attract mode |
+| P10 — Dodge (3rd mode) | ⬜ | Cuttable |
+| P11 — visual identity & ship | ⬜ | Art-direction pass, mascot, refreshed artifact |
+
+**Contract evolution so far (vs the Phase 3 sketch).** The seam held: two games and a whole shell were added with only two small, deliberate extensions —
+- **P5** added `JukeGame.configure?(CalibrationResult)` (the shell hands a game its calibration output at the moment play begins) and `Engine.clearActiveGame()`.
+- **P6** added `PerceptionFrame.gestures` (the Gesture Recognizer's top built-in label per hand) so Simon-Says can match by label. Everything else about the second game was *one new file + registration*, exactly as the contract intended.
+
+See **Appendix — Architecture as built** for the realized layering and the "add a new game" checklist.
+
+---
+
 ## Phase 0 — Project skeleton & dev loop
 
 **Goal:** A running dev environment that serves a blank page over HTTPS-capable localhost, deployable as a static site.
@@ -462,3 +489,76 @@ The single biggest tell of an AI-generated / "vibe-coded" site is that it wears 
 - Designed **empty / loading / error** states — the loading screen (P5) and camera-error screens are part of the brand, not afterthoughts.
 
 **A 30-minute "kill the vibe-coded look" starter** (pull forward anytime): swap in one webfont pair, shift the palette off the defaults, drop in a real wordmark + favicon, add OG meta, and give every state-change a shared easing. That alone moves the needle more than any single game feature.
+
+---
+
+## Appendix — Architecture as built (the seam, and how to extend it)
+
+How the layers actually turned out after P0–P6, and where to plug new work in.
+
+**The data path — one direction, one frame at a time:**
+
+```
+camera (getUserMedia)             engine/camera.ts
+  └─ perception (MediaPipe)       engine/perception.ts   (pose always; hands lazy)
+       └─ producer                engine/producer.ts     (→ one PerceptionFrame / tick)
+            └─ Engine loop         engine/loop.ts         (fixed-timestep update + render)
+                 └─ JukeGame       games/*.ts             (the single active game)
+                      └─ Shell     shell/app.ts           (lifecycle + DOM screens, via the overlay hook)
+```
+
+- **`PerceptionFrame`** (`engine/frame.ts`) is the *only* thing games consume: `silhouetteMask` (+ `maskW/H`), `pose`, `hands`, `gestures`, `video`, `dt`. It's the same shape the fixture recorder stores, so any frame round-trips through headless replay. Keep it minimal — add a field only when a shipping game needs it (precedent: `gestures`, P6). New fields should be nullable so body games and fixture replay are unaffected.
+- **`Producer`** (`engine/producer.ts`) hides whether frames come from the live camera or a replayed fixture; the loop is identical either way. It lazy-loads the hand model only when a game declares `needs: ['hands']`, so body games never pay for it.
+- **`Engine`** (`engine/loop.ts`) owns the RAF loop, one active-game slot, and a per-frame `overlay` hook. It knows nothing about menus or lifecycle.
+- **`JukeGame`** (`engine/game.ts`) is the seam every game implements: `id/title/needs/intensity`, `reset/init/update/render/score/isOver`, and optional `configure(CalibrationResult)`. Games are *written to this contract*, fed a `PerceptionFrame` each tick — never reaching around the engine.
+- **`Shell`** (`shell/app.ts`) is layered *on top of* the engine via its overlay hook. It owns the state machine, calibration, and the DOM screens (`shell/screens.ts`), all built from the design tokens (`shell/theme.ts` + `style.css`). The engine has no dependency on the shell — you could drive a game headless without it.
+
+**To add a new game — the whole checklist (P6 proved it):**
+1. Create `games/yourGame.ts` implementing `JukeGame`; end with `register(new YourGame())`.
+2. Declare `needs` (`'pose'` / `'hands'`) and `intensity` (`'standing'` / `'seated'`) — these drive lazy model loading and which calibration branch the shell shows.
+3. Render a `waiting`-phase preview (it shows behind the shell's calibration + countdown). Begin the run from `configure()` — the shell's "play starts now" signal. Report progress via `score()` and end via `isOver()`.
+4. Add a side-effect `import './games/yourGame'` in `main.ts` and a menu blurb in `shell/app.ts`. It now appears in the menu, calibrates, counts down, scores, and dies — for free.
+
+**Lifecycle states** (`shell/app.ts`): `title → menu → calibrate → countdown → play → gameover`, plus a dev-only `replay`. **Escape** backs out to the menu from any in-game state (so a player is never trapped on a calibration screen they can't satisfy); **Enter** retries on game-over. A model-load failure (e.g. the lazy hand model offline) surfaces as an error overlay and returns to the menu rather than stalling.
+
+---
+
+## Appendix — Future directions (expanded ideas beyond the plan)
+
+Concrete notes so the next phase doesn't start from a blank page. Grouped by the seam they touch; none are committed scope.
+
+**Engine / contract**
+- **Gate inference by `needs`.** Today the producer always runs the pose model, even during seated Simon-Says (which only needs hands). Running *only* the models the active game declares would be measurably cheaper on a laptop and cut wasted latency — verify the win on the live FPS readout. This is the highest-value cleanup left in the engine.
+- **WebGPU delegate + adaptive resolution.** The Phase 1 budget readout already exists; close the loop by auto-dropping camera/mask resolution when it flashes red (the dials are already in the debug panel) instead of tuning by hand.
+- **Keep `PerceptionFrame` minimal.** `gestures` is the model to follow: add a nullable field only when a real game needs it, so replay and other games stay untouched.
+
+**HUD / shell**
+- **Combo + health/crack meter (deferred from P5).** Let a game *optionally* expose `combo()` / `health()` (0..1); the shell HUD renders them when present and nothing when absent — the same opt-in pattern as `configure?`. The crack meter is really the P7 soft-fail mechanic surfaced in the HUD.
+- **Shared canvas easing.** When juice (P7) starts tweening on the canvas, add easing helpers to `shell/theme.ts` mirroring the CSS `--ease-*` tokens so DOM and canvas motion match. (They were removed for now to avoid dead code — re-add them with their first real caller.)
+- **Attract / idle mode (P9).** The menu's idle backdrop (`Shell.drawIdle`) is the hook point — drop a looping silhouette ghost or a replayed fixture there so the first frame of the live link already moves.
+
+**Hand Simon-Says — rich tier (P11 stretch)**
+- Beyond the 7 built-in labels: grade *arbitrary* poses from landmarks via `fingerStates` (already in `pose.ts`) + in-plane rotation — never on palm-facing depth (too noisy from one webcam). The target set becomes data instead of the model's fixed labels.
+- Tempo/lives are tuned constants in `simonSays.ts`; promote them to the debug panel like the wall dials so the difficulty curve is tunable by measurement, not guesswork.
+
+**Juice (P7) — the hooks are already there**
+- `juice/` services: `particles.burst()`, `camera.shake()`, `time.freeze/slowmo()`, `fx.flash()`. Wire them to the events the games *already compute* — HITW's pass/squash transition, Simon-Says's hit/miss feedback.
+- Audio subsystem (`juice/audio.ts`, Web Audio): menu music that ramps with difficulty, event SFX on those same transitions, "duck on death". Kick the AudioContext on the first menu click (autoplay rules).
+- Capture path: a ring buffer of the last ~2 s of canvas frames dumped to GIF/WebM on game-over — the freeze-frame work produces it almost for free, and it's the raw material for the P9 share artifacts.
+
+**Persistence & sharing (P8) — all client-side**
+- Share card (`shell/shareCard.ts`): render the freeze-frame + score + shape name to a downloadable PNG.
+- Leaderboard (`shell/leaderboard.ts`): `localStorage` daily + all-time best.
+- Daily seed (`shell/dailySeed.ts`): seed the wall sequence from `YYYY-MM-DD`. Low value for a play-once gallery — keep it optional.
+
+**More games (cheap, now the seam is paid for)**
+- *Dodge the Objects* (P10): objects fly in; `maskOverlap` against object pixels = hit.
+- *Lean / balance*: hold a tilt read from the shoulder-line angle (`limbAngle`) — a calm, seated-friendly counterpoint to the frantic modes.
+- *Reach targets*: light up zones, touch them with a wrist landmark — a natural rhythm-game base if walls/targets arrive on the beat.
+
+**Accessibility (cheap, broadens appeal)**
+- Reduce-motion / reduce-flash toggle: the CSS already honors `prefers-reduced-motion`; expose an in-app switch and gate screen shake on it.
+- Colour-blind-safe danger cues — don't lean on red/green alone; pair with brightness/shape (the calibration dots already pair colour with a fill change; extend that discipline to the wall heat and Simon-Says feedback).
+
+**Optional backend (last, never blocking)**
+- A global leaderboard is the only feature that wants a server; everything ships with zero network today. If added, keep it strictly behind the local board so a network failure never breaks play.

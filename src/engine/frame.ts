@@ -15,6 +15,13 @@
 import type { Grid } from './mask';
 import type { Point } from './pose';
 
+/** Top recognized hand gesture (Phase 6) — a built-in MediaPipe label + score. */
+export interface HandGesture {
+  /** e.g. 'Open_Palm', 'Closed_Fist', 'Victory', 'Thumb_Up', or 'None'. */
+  name: string;
+  score: number;
+}
+
 export interface PerceptionFrame {
   /** Row-major foreground occupancy (0..1), length `maskW*maskH`. Null until the first mask arrives. */
   silhouetteMask: Float32Array | null;
@@ -24,6 +31,8 @@ export interface PerceptionFrame {
   pose: Point[] | null;
   /** Hands (21 landmarks each); only populated when the active game `needs` 'hands'. */
   hands: Point[][] | null;
+  /** Top recognized gesture per detected hand (Phase 6); aligned with `hands`. Null unless a hands game is active. */
+  gestures: HandGesture[] | null;
   /** Live video for rendering the feed; null during headless/fixture replay. */
   video: HTMLVideoElement | null;
   /** Real milliseconds since the previous frame (matches recorded fixtures). */

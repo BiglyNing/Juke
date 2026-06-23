@@ -10,8 +10,12 @@ import { PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Point } from '../engine/pose';
 import type { PerceptionFrame } from '../engine/frame';
 import { containRect, drawMirrored, type Rect } from './canvas';
+import { COLORS, rgba } from '../shell/theme';
 
 const VISIBILITY_THRESHOLD = 0.5;
+
+// COLORS.teal (#2ee6c8) as RGB ints, for the per-pixel silhouette fill.
+const TEAL_RGB = [46, 230, 200] as const;
 
 // Reused offscreen canvas for the upscaled mask overlay.
 const maskCanvas = document.createElement('canvas');
@@ -53,9 +57,9 @@ export function drawSilhouetteMask(
   for (let i = 0; i < w * h; i++) {
     const v = data[i];
     const o = i * 4;
-    img.data[o] = 0; // R
-    img.data[o + 1] = 230; // G
-    img.data[o + 2] = 255; // B
+    img.data[o] = TEAL_RGB[0]; // R
+    img.data[o + 1] = TEAL_RGB[1]; // G
+    img.data[o + 2] = TEAL_RGB[2]; // B
     img.data[o + 3] = v > 0.5 ? Math.min(255, Math.round(v * 200)) : 0;
   }
   maskCtx.putImageData(img, 0, 0);
@@ -73,9 +77,9 @@ export function drawPoseSkeleton(
   const py = (ny: number): number => rect.y + ny * rect.h;
 
   ctx.lineWidth = Math.max(2, ctx.canvas.width / 320);
-  ctx.strokeStyle = '#00e6ff';
+  ctx.strokeStyle = COLORS.teal;
   ctx.lineCap = 'round';
-  ctx.shadowColor = 'rgba(0, 230, 255, 0.8)';
+  ctx.shadowColor = rgba(COLORS.teal, 0.8);
   ctx.shadowBlur = 8;
   for (const { start, end } of PoseLandmarker.POSE_CONNECTIONS) {
     const a = pose[start];
@@ -91,9 +95,54 @@ export function drawPoseSkeleton(
   const r = Math.max(3, ctx.canvas.width / 280);
   for (const lm of pose) {
     ctx.fillStyle =
-      (lm.visibility ?? 0) >= VISIBILITY_THRESHOLD ? '#ffffff' : 'rgba(255, 46, 136, 0.5)';
+      (lm.visibility ?? 0) >= VISIBILITY_THRESHOLD ? '#ffffff' : rgba(COLORS.magenta, 0.5);
     ctx.beginPath();
     ctx.arc(px(lm.x), py(lm.y), r, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+// MediaPipe's 21-keypoint hand topology (wrist + 4 joints per finger).
+const HAND_CONNECTIONS: [number, number][] = [
+  [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+  [0, 5], [5, 6], [6, 7], [7, 8], // index
+  [5, 9], [9, 10], [10, 11], [11, 12], // middle
+  [9, 13], [13, 14], [14, 15], [15, 16], // ring
+  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20], // pinky + palm
+];
+
+/** Draw a hand's 21 landmarks + bones into the mirrored selfie rect (Phase 6). */
+export function drawHandSkeleton(
+  ctx: CanvasRenderingContext2D,
+  hand: Point[],
+  rect: Rect,
+  color: string = COLORS.teal,
+): void {
+  const px = (nx: number): number => rect.x + (1 - nx) * rect.w; // mirror x (selfie)
+  const py = (ny: number): number => rect.y + ny * rect.h;
+
+  ctx.save();
+  ctx.lineWidth = Math.max(2, ctx.canvas.width / 360);
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  for (const [a, b] of HAND_CONNECTIONS) {
+    const p = hand[a];
+    const q = hand[b];
+    if (!p || !q) continue;
+    ctx.beginPath();
+    ctx.moveTo(px(p.x), py(p.y));
+    ctx.lineTo(px(q.x), py(q.y));
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ffffff';
+  const r = Math.max(2.5, ctx.canvas.width / 320);
+  for (const lm of hand) {
+    ctx.beginPath();
+    ctx.arc(px(lm.x), py(lm.y), r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }

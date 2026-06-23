@@ -30,28 +30,11 @@ export const FONT = {
   mono: "'Space Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace",
 } as const;
 
-/** Motion language — durations (ms) and easings shared by DOM + canvas tweens. */
-export const MOTION = {
-  fast: 120,
-  med: 240,
-  slow: 420,
-} as const;
-
-/** Standard "ease-out" (matches the CSS `--ease-out` curve closely enough). */
-export function easeOutCubic(t: number): number {
-  const u = 1 - clamp01(t);
-  return 1 - u * u * u;
-}
-
-/** Symmetric ease-in-out, for pulses that grow and settle. */
-export function easeInOut(t: number): number {
-  const x = clamp01(t);
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-}
-
-function clamp01(t: number): number {
-  return t < 0 ? 0 : t > 1 ? 1 : t;
-}
+// Motion tokens (easing curves + durations) live only in `style.css`
+// (`--ease-*` / `--dur-*`) since today every animation is CSS-driven. When the
+// juice layer (Phase 7) starts tweening on the canvas, add the shared easing
+// helpers here so DOM and canvas motion stay in lockstep — see the "Future
+// directions" appendix in IMPLEMENTATION.md.
 
 /** `rgba()` string from a `#rrggbb` token + alpha — for canvas fills/strokes. */
 export function rgba(hex: string, alpha: number): string {

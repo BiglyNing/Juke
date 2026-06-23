@@ -5,8 +5,11 @@
  * {@link JukeGame}, is registered, and runs through the engine loop fed by either
  * a live camera or a replayed fixture. It draws exactly what a real game sees —
  * the faded video, the silhouette, and the skeleton — plus the live `dt`, so the
- * contract is visible on screen. Hole-in-the-Wall (Phase 4) is the real game;
- * this can be deleted once that's done.
+ * contract is visible on screen.
+ *
+ * It's now retained as the target of the headless fixture-replay harness (the
+ * shell's `enterReplay`, bound to the F key / file drag-drop), so refactors to
+ * perception/engine can be eyeballed against a recording without a webcam.
  */
 
 import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
@@ -17,6 +20,7 @@ import {
   drawSilhouetteMask,
   drawPoseSkeleton,
 } from '../render/perception';
+import { COLORS, FONT, rgba } from '../shell/theme';
 
 class TestGame implements JukeGame {
   readonly id = 'test';
@@ -61,9 +65,9 @@ class TestGame implements JukeGame {
 
   private drawReadout(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void {
     const size = Math.max(11, Math.round(ctx.canvas.width / 90));
-    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.font = `${size}px ${FONT.mono}`;
     ctx.textBaseline = 'bottom';
-    ctx.fillStyle = 'rgba(232, 236, 244, 0.85)';
+    ctx.fillStyle = rgba(COLORS.text, 0.85);
     const src = frame.video ? 'live' : 'replay';
     const pad = Math.round(ctx.canvas.width / 80);
     const line =
