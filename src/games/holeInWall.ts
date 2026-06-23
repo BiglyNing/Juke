@@ -196,14 +196,14 @@ class HoleInWall implements JukeGame {
   private drawFraming(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void {
     const needLegs = this.profile?.hasLegs ?? true;
     const f = frame.pose ? limbsFramed(frame.pose) : null;
-    const ok = f ? (needLegs ? f.allVisible : f.wristL && f.wristR) : false;
+    const ok = f ? (needLegs ? f.bodyFramed : f.wristL && f.wristR) : false;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.font = `${Math.round(ctx.canvas.width / 64)}px ${FONT.mono}`;
     ctx.fillStyle = ok ? rgba(COLORS.ok, 0.85) : rgba(COLORS.warn, 0.95);
     ctx.fillText(
-      ok ? '✓ in position' : needLegs ? 'show both hands & both feet' : 'show both hands',
+      ok ? '✓ in position' : needLegs ? 'show your hands & legs' : 'show both hands',
       ctx.canvas.width / 2,
       ctx.canvas.height - Math.round(ctx.canvas.height / 40),
     );

@@ -93,15 +93,17 @@ export function rasterizeSolid(hole: Hole, w: number, h: number): BinaryMask {
 // A pose is a *variation* — a direction for each limb — applied to the player's
 // calibrated body. The hole's anchors (head/torso/shoulders/hips) come straight
 // from the BodyProfile, so the hole is always the player's size and position; the
-// variation just aims the limbs. Legs are only added when the player's legs were
-// in frame at calibration, so seated/close players get upper-body holes.
+// variation just aims the limbs. Legs are added whenever the player's legs (knees)
+// were in frame — feet optional; wide-stance poses (`needsFeet`) only appear when
+// the feet are framed too. A truly close/seated player (no knees) gets upper-body
+// holes.
 
 import type { BodyProfile, Vec } from '../engine/calibration';
 
 export interface Variation {
   name: string;
-  /** If true, this pose is only offered when the player has legs in frame. */
-  needsLegs: boolean;
+  /** If true, this wide-stance pose is only offered when the player's feet are in frame. */
+  needsFeet: boolean;
   /** Limb aim directions (frame space, y points down); magnitude is normalized. */
   armL: Vec;
   armR: Vec;
@@ -111,14 +113,14 @@ export interface Variation {
 
 /** A small set of distinct poses; arms are the main discriminator. */
 export const VARIATIONS: Variation[] = [
-  { name: 'Arms up', needsLegs: false, armL: { x: -0.25, y: -1 }, armR: { x: 0.25, y: -1 } },
-  { name: 'T-pose', needsLegs: false, armL: { x: -1, y: -0.05 }, armR: { x: 1, y: -0.05 } },
-  { name: 'Arms down', needsLegs: false, armL: { x: -0.35, y: 1 }, armR: { x: 0.35, y: 1 } },
-  { name: 'Cactus', needsLegs: false, armL: { x: -0.7, y: -0.7 }, armR: { x: 0.7, y: -0.7 } },
-  { name: 'One arm up', needsLegs: false, armL: { x: -0.3, y: -1 }, armR: { x: 0.35, y: 1 } },
+  { name: 'Arms up', needsFeet: false, armL: { x: -0.25, y: -1 }, armR: { x: 0.25, y: -1 } },
+  { name: 'T-pose', needsFeet: false, armL: { x: -1, y: -0.05 }, armR: { x: 1, y: -0.05 } },
+  { name: 'Arms down', needsFeet: false, armL: { x: -0.35, y: 1 }, armR: { x: 0.35, y: 1 } },
+  { name: 'Cactus', needsFeet: false, armL: { x: -0.7, y: -0.7 }, armR: { x: 0.7, y: -0.7 } },
+  { name: 'One arm up', needsFeet: false, armL: { x: -0.3, y: -1 }, armR: { x: 0.35, y: 1 } },
   {
     name: 'Star',
-    needsLegs: true,
+    needsFeet: true,
     armL: { x: -0.8, y: -1 },
     armR: { x: 0.8, y: -1 },
     legL: { x: -0.6, y: 1 },
@@ -156,13 +158,13 @@ export function holeFromProfile(p: BodyProfile, v: Variation): Hole {
   return { name: v.name, shapes };
 }
 
-/** Pick a variation valid for this body (no leg poses if no legs), avoiding a repeat. */
+/** Pick a variation valid for this body (no wide-stance poses without feet), avoiding a repeat. */
 export function pickVariation(
   profile: BodyProfile,
   rand: () => number = Math.random,
   avoid?: Variation,
 ): Variation {
-  const pool = VARIATIONS.filter((v) => profile.hasLegs || !v.needsLegs);
+  const pool = VARIATIONS.filter((v) => profile.hasFeet || !v.needsFeet);
   let pick = pool[Math.floor(rand() * pool.length)];
   if (avoid && pool.length > 1) {
     while (pick === avoid) pick = pool[Math.floor(rand() * pool.length)];

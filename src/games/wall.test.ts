@@ -30,8 +30,12 @@ const standing: BodyProfile = {
   limbR: 0.06,
   hasArms: true,
   hasLegs: true,
+  hasFeet: true,
 };
-const seated: BodyProfile = { ...standing, hasLegs: false };
+// Legs (knees) in frame but feet cropped — gets leg poses, no wide-stance ones.
+const legsNoFeet: BodyProfile = { ...standing, hasFeet: false };
+// Truly close/seated — no legs at all.
+const seated: BodyProfile = { ...standing, hasLegs: false, hasFeet: false };
 
 test('pointInHole: inside a circle is true, outside is false', () => {
   assert.equal(pointInHole(circleHole, 0.5, 0.5), true);
@@ -69,8 +73,16 @@ test('holeFromProfile: a legless (seated) body omits the leg capsules', () => {
   assert.equal(holeFromProfile(seated, armsUp).shapes.length, 4); // head + torso + 2 arms
 });
 
-test('pickVariation never offers a legs-only pose to a legless body', () => {
-  for (let i = 0; i < 50; i++) assert.equal(pickVariation(seated, Math.random).needsLegs, false);
+test('holeFromProfile: knees-in-frame but feet-cropped body still carves legs', () => {
+  const armsUp = VARIATIONS.find((v) => v.name === 'Arms up')!;
+  assert.equal(holeFromProfile(legsNoFeet, armsUp).shapes.length, 6); // head + torso + 2 arms + 2 legs
+});
+
+test('pickVariation never offers a wide-stance (feet) pose to a body without feet', () => {
+  for (let i = 0; i < 50; i++) {
+    assert.equal(pickVariation(seated, Math.random).needsFeet, false);
+    assert.equal(pickVariation(legsNoFeet, Math.random).needsFeet, false);
+  }
 });
 
 test('pickVariation(avoid) does not repeat the previous pose', () => {

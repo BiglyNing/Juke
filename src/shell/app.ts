@@ -135,10 +135,11 @@ export class Shell {
       return;
     }
 
-    // Standing: only accumulate calibration frames while fully framed, so a run
-    // can never start from a half-cropped body.
+    // Standing: accumulate calibration frames while the body (hands + legs) is
+    // framed — feet are optional, so we never demand the player step all the way
+    // back. The profile records whether feet were visible to adapt the poses.
     const pose = frame?.pose ?? null;
-    const framed = pose ? limbsFramed(pose).allVisible && canCalibrate(pose) : false;
+    const framed = pose ? limbsFramed(pose).bodyFramed && canCalibrate(pose) : false;
     if (framed) {
       const profile = this.calibrator.add(pose);
       if (profile) {
@@ -162,18 +163,21 @@ export class Shell {
       };
     }
     const f = frame?.pose ? limbsFramed(frame.pose) : null;
-    const ready = !!f?.allVisible && canCalibrate(frame?.pose ?? null);
+    const ready = !!f?.bodyFramed && canCalibrate(frame?.pose ?? null);
+    const feet = !!f?.ankleL && !!f?.ankleR;
     return {
       intensity: 'standing',
       heading: ready ? 'HOLD STILL' : 'STEP BACK',
       hint: ready
-        ? 'Learning your shape and size — hold the pose.'
-        : 'Get your whole body in frame: both hands and both feet visible. Plain background, face the light.',
+        ? feet
+          ? 'Full body in frame — hold the pose.'
+          : 'Legs in frame — hold still. (Show your feet too for wider poses.)'
+        : 'Get your hands and legs in frame. Feet are optional. Plain background, face the light.',
       checks: [
         { label: 'Left hand', ok: !!f?.wristL },
         { label: 'Right hand', ok: !!f?.wristR },
-        { label: 'Left foot', ok: !!f?.ankleL },
-        { label: 'Right foot', ok: !!f?.ankleR },
+        { label: 'Left leg', ok: !!f?.kneeL },
+        { label: 'Right leg', ok: !!f?.kneeR },
       ],
       progress: this.calibrator.progress,
       ready,

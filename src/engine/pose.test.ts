@@ -20,18 +20,37 @@ test('jointAngle returns 0 on a degenerate (zero-length) segment', () => {
   assert.equal(jointAngle({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 0);
 });
 
-test('limbsFramed: all four limbs visible -> allVisible true', () => {
+test('limbsFramed: all joints visible -> bodyFramed and allVisible true', () => {
   const pose: Point[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, visibility: 0.9 }));
   const f = limbsFramed(pose);
-  assert.deepEqual(f, { wristL: true, wristR: true, ankleL: true, ankleR: true, allVisible: true });
+  assert.deepEqual(f, {
+    wristL: true,
+    wristR: true,
+    kneeL: true,
+    kneeR: true,
+    ankleL: true,
+    ankleR: true,
+    bodyFramed: true,
+    allVisible: true,
+  });
 });
 
-test('limbsFramed: a low-visibility ankle fails the gate', () => {
+test('limbsFramed: feet optional — cropped ankles keep bodyFramed, drop allVisible', () => {
   const pose: Point[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, visibility: 0.9 }));
-  pose[27] = { x: 0, y: 0, visibility: 0.2 }; // left ankle occluded / out of frame
+  pose[27] = { x: 0, y: 0, visibility: 0.2 }; // left ankle out of frame
+  pose[28] = { x: 0, y: 0, visibility: 0.2 }; // right ankle out of frame
   const f = limbsFramed(pose);
   assert.equal(f.ankleL, false);
-  assert.equal(f.allVisible, false);
+  assert.equal(f.bodyFramed, true, 'hands + knees still framed');
+  assert.equal(f.allVisible, false, 'feet are not framed');
+});
+
+test('limbsFramed: a low-visibility knee fails the body gate', () => {
+  const pose: Point[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, visibility: 0.9 }));
+  pose[25] = { x: 0, y: 0, visibility: 0.2 }; // left knee out of frame
+  const f = limbsFramed(pose);
+  assert.equal(f.kneeL, false);
+  assert.equal(f.bodyFramed, false);
 });
 
 test('fingerStates distinguishes extended from curled fingers', () => {

@@ -29,7 +29,7 @@ export interface BodyProfile {
   hipR: Vec;
   /** Shoulder width — the player's apparent size unit (scales every hole). */
   unit: number;
-  /** Measured arm reach (shoulder→wrist) and leg reach (hip→ankle), in frame units. */
+  /** Measured arm reach (shoulder→wrist) and leg reach (hip→ankle/knee), in frame units. */
   armLen: number;
   legLen: number;
   /** Hole radii derived from `unit` so holes are generous for this body. */
@@ -37,7 +37,10 @@ export interface BodyProfile {
   limbR: number;
   /** Which limbs were visible at calibration — drives which poses are generated. */
   hasArms: boolean;
+  /** Legs (knees) in frame → leg capsules are added to poses. Feet are NOT required. */
   hasLegs: boolean;
+  /** Feet (ankles) in frame → exact leg length + wide-stance / foot-precise poses unlock. */
+  hasFeet: boolean;
 }
 
 // MediaPipe BlazePose landmark indices.
@@ -48,6 +51,8 @@ const WR_L = 15;
 const WR_R = 16;
 const HIP_L = 23;
 const HIP_R = 24;
+const KN_L = 25;
+const KN_R = 26;
 const AN_L = 27;
 const AN_R = 28;
 
@@ -90,10 +95,18 @@ export function buildProfile(pose: Point[]): BodyProfile | null {
     ? (dist(shoulderL, pt(pose, WR_L)) + dist(shoulderR, pt(pose, WR_R))) / 2
     : unit * 1.7;
 
-  const hasLegs = v(AN_L) && v(AN_R);
-  const legLen = hasLegs
+  // Feet are optional: legs count as "in frame" when the knees are visible, so a
+  // player who can't fit their feet still gets leg poses. Feet (ankles) only add
+  // an exact leg length and unlock wide-stance / foot-precise poses.
+  const hasFeet = v(AN_L) && v(AN_R);
+  const hasLegs = hasFeet || (v(KN_L) && v(KN_R));
+  const legLen = hasFeet
     ? (dist(hipL, pt(pose, AN_L)) + dist(hipR, pt(pose, AN_R))) / 2
-    : unit * 2.2;
+    : hasLegs
+      ? // knees only: estimate the full leg (knee ≈ mid-leg) — generous so the
+        // capsule reaches the bottom of frame where the unseen feet would be.
+        Math.max(((dist(hipL, pt(pose, KN_L)) + dist(hipR, pt(pose, KN_R))) / 2) * 1.9, unit * 2)
+      : unit * 2.2;
 
   return {
     head,
@@ -111,6 +124,7 @@ export function buildProfile(pose: Point[]): BodyProfile | null {
     limbR: unit * 0.4,
     hasArms,
     hasLegs,
+    hasFeet,
   };
 }
 

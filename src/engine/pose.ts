@@ -40,33 +40,52 @@ export function jointAngle(a: Point, b: Point, c: Point): number {
   return Math.acos(cos) * DEG;
 }
 
-// MediaPipe pose landmark indices for the four limb extremities.
+// MediaPipe pose landmark indices for the limb joints we gate framing on.
 const WRIST_L = 15;
 const WRIST_R = 16;
+const KNEE_L = 25;
+const KNEE_R = 26;
 const ANKLE_L = 27;
 const ANKLE_R = 28;
 
 export interface FramingState {
   wristL: boolean;
   wristR: boolean;
+  kneeL: boolean;
+  kneeR: boolean;
   ankleL: boolean;
   ankleR: boolean;
-  /** True only when all four limbs are visible above the threshold. */
+  /** Both hands and both legs (knees) framed — the calibration minimum. Feet optional. */
+  bodyFramed: boolean;
+  /** All four extremities including the feet (ankles) — the stricter, feet-inclusive gate. */
   allVisible: boolean;
 }
 
 /**
- * The crude framing gate (Phase 4.5, seed of Phase 5 calibration): are all four
- * limb extremities (both wrists, both ankles) visible above `threshold`? If not,
- * the player is too close / cut off and leniency tuning would be wrong.
+ * The framing gate (Phase 4.5 / Phase 5 calibration): which limb joints are
+ * visible above `threshold`? `bodyFramed` (hands + knees) is the minimum to
+ * calibrate — feet are deliberately optional, since not everyone can step back
+ * far enough to fit them. `allVisible` additionally requires the feet, which
+ * only unlocks wider, foot-precise poses.
  */
 export function limbsFramed(pose: Point[], threshold = 0.5): FramingState {
   const vis = (i: number): boolean => (pose[i]?.visibility ?? 0) >= threshold;
   const wristL = vis(WRIST_L);
   const wristR = vis(WRIST_R);
+  const kneeL = vis(KNEE_L);
+  const kneeR = vis(KNEE_R);
   const ankleL = vis(ANKLE_L);
   const ankleR = vis(ANKLE_R);
-  return { wristL, wristR, ankleL, ankleR, allVisible: wristL && wristR && ankleL && ankleR };
+  return {
+    wristL,
+    wristR,
+    kneeL,
+    kneeR,
+    ankleL,
+    ankleR,
+    bodyFramed: wristL && wristR && kneeL && kneeR,
+    allVisible: wristL && wristR && ankleL && ankleR,
+  };
 }
 
 export interface FingerStates {
