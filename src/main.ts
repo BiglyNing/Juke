@@ -20,6 +20,7 @@ import { containRect, drawMirrored, type Rect } from './render/canvas';
 import sampleFixtureJson from './engine/__fixtures__/sample.json';
 
 // Registering a game is a side-effect import. Adding a game = import its module.
+import './games/holeInWall';
 import './games/testGame';
 
 // ---------------------------------------------------------------------------
@@ -273,11 +274,11 @@ async function start(): Promise<void> {
 
   hideOverlay();
   engine.setProducer(liveProducer);
-  await engine.setActiveGame('test'); // swapping the active game is this one line
+  await engine.setActiveGame('holeInWall'); // swapping the active game is this one line
 }
 
 showOverlay({
   title: 'Juke',
-  body: 'A webcam motion arcade. Stand back so your whole body is in frame, then move — you should see your silhouette and skeleton tracked live. Press D for the debug overlay, F to replay the demo fixture.',
+  body: 'A webcam motion arcade. Stand back so your whole body is in frame — a wall with a gap will appear; line your silhouette up with the hole. Press D for the debug overlay.',
   action: { label: 'Enable camera & start', onClick: start },
 });
