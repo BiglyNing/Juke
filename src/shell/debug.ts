@@ -16,6 +16,10 @@ export interface DebugParams {
   erodePx: number;
   /** Leniency threshold — pass if overlap ratio < tol (used from Phase 4 on). */
   tol: number;
+  /** Hole-in-the-Wall: seconds for a wall to approach (lower = faster, harder). */
+  wallSecs: number;
+  /** Hole-in-the-Wall: z (0..1) at which the crossing/judging window opens. */
+  windowStart: number;
   /** Force the frame over the perf budget, to prove the red readout works. */
   stress: boolean;
   /** Draw the downsampled collision grid over the video. */
@@ -27,6 +31,8 @@ export const debugParams: DebugParams = {
   alpha: 0.5,
   erodePx: 1,
   tol: 0.08,
+  wallSecs: 4.5,
+  windowStart: 0.86,
   stress: false,
   showGrid: true,
 };
@@ -122,6 +128,12 @@ function buildPanel(): void {
   );
   panel.appendChild(
     slider('TOL', 0, 0.5, 0.01, () => debugParams.tol, (v) => (debugParams.tol = v)),
+  );
+  panel.appendChild(
+    slider('wall secs', 1.5, 8, 0.5, () => debugParams.wallSecs, (v) => (debugParams.wallSecs = v)),
+  );
+  panel.appendChild(
+    slider('window', 0.6, 0.98, 0.02, () => debugParams.windowStart, (v) => (debugParams.windowStart = v)),
   );
   panel.appendChild(checkbox('show grid', () => debugParams.showGrid, (v) => (debugParams.showGrid = v)));
   panel.appendChild(

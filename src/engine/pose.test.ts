@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { limbAngle, jointAngle, fingerStates, type Point } from './pose.ts';
+import { limbAngle, jointAngle, fingerStates, limbsFramed, type Point } from './pose.ts';
 
 const close = (a: number, b: number, eps = 1e-9): void =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
@@ -18,6 +18,20 @@ test('jointAngle: a right angle and a straight line', () => {
 
 test('jointAngle returns 0 on a degenerate (zero-length) segment', () => {
   assert.equal(jointAngle({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 0);
+});
+
+test('limbsFramed: all four limbs visible -> allVisible true', () => {
+  const pose: Point[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, visibility: 0.9 }));
+  const f = limbsFramed(pose);
+  assert.deepEqual(f, { wristL: true, wristR: true, ankleL: true, ankleR: true, allVisible: true });
+});
+
+test('limbsFramed: a low-visibility ankle fails the gate', () => {
+  const pose: Point[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, visibility: 0.9 }));
+  pose[27] = { x: 0, y: 0, visibility: 0.2 }; // left ankle occluded / out of frame
+  const f = limbsFramed(pose);
+  assert.equal(f.ankleL, false);
+  assert.equal(f.allVisible, false);
 });
 
 test('fingerStates distinguishes extended from curled fingers', () => {

@@ -12,7 +12,8 @@
 
 import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
 import { type PerceptionFrame, maskGrid } from '../engine/frame';
-import { binarize, erode, maskOverlap } from '../engine/mask';
+import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
+import { limbsFramed } from '../engine/pose';
 import { rasterizeSolid, pickPose, type Hole } from './wall';
 import {
   perceptionRect,
@@ -21,10 +22,8 @@ import {
   drawPoseSkeleton,
 } from '../render/perception';
 import type { Rect } from '../render/canvas';
-import { debugParams } from '../shell/debug';
+import { debugParams, isDebugOn } from '../shell/debug';
 
-const APPROACH_MS = 4500; // far -> player plane
-const WINDOW_START = 0.86; // z at which the crossing/judging window opens
 const RESULT_MS = 950; // how long the PASS/SQUASHED verdict lingers
 const FAR_SCALE = 0.32; // how small the wall starts (fake depth)
 const MIN_PLAYER_AREA = 0.012; // fraction of cells that must be "you" to count
@@ -50,6 +49,12 @@ class HoleInWall implements JukeGame {
   private lastPass = false;
   private resultTimer = 0;
   private scoreValue = 0;
+
+  // Cached wall-solid rasterization (the hole is fixed per wall, so rasterize once).
+  private solid: BinaryMask | null = null;
+  private solidW = 0;
+  private solidH = 0;
+  private solidHole: Hole | null = null;
 
   init(): void {
     /* engine calls reset() before init; nothing else to allocate */
@@ -80,11 +85,12 @@ class HoleInWall implements JukeGame {
     }
 
     // approach
-    this.z = Math.min(1, this.z + dt / APPROACH_MS);
-    if (this.z >= WINDOW_START) {
-      const ratio = this.judge(frame);
-      if (ratio !== null) {
-        this.liveRatio = ratio;
+    this.z = Math.min(1, this.z + dt / (debugParams.wallSecs * 1000));
+    // Judge every frame for live green/magenta feedback; only the window counts.
+    const ratio = this.judge(frame);
+    if (ratio !== null) {
+      this.liveRatio = ratio;
+      if (this.z >= debugParams.windowStart) {
         this.minRatio = Math.min(this.minRatio, ratio);
         this.judged = true;
       }
@@ -105,8 +111,18 @@ class HoleInWall implements JukeGame {
     let area = 0;
     for (let i = 0; i < player.data.length; i++) area += player.data[i];
     if (area < MIN_PLAYER_AREA * player.data.length) return 1; // nobody in frame -> can't pass
-    const solid = rasterizeSolid(this.hole, grid.width, grid.height);
-    return maskOverlap(player, solid).ratio;
+    return maskOverlap(player, this.wallSolid(grid.width, grid.height)).ratio;
+  }
+
+  /** Rasterize the wall's solid region once per wall/size and reuse it each frame. */
+  private wallSolid(w: number, h: number): BinaryMask {
+    if (!this.solid || this.solidW !== w || this.solidH !== h || this.solidHole !== this.hole) {
+      this.solid = rasterizeSolid(this.hole, w, h);
+      this.solidW = w;
+      this.solidH = h;
+      this.solidHole = this.hole;
+    }
+    return this.solid;
   }
 
   private nextWall(): void {
@@ -127,7 +143,25 @@ class HoleInWall implements JukeGame {
       drawSilhouetteMask(ctx, frame.silhouetteMask, frame.maskW, frame.maskH, rect, 0.6);
     }
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+    this.drawFraming(ctx, frame);
     this.drawHud(ctx);
+  }
+
+  /** Corner framing gate: are both hands and both feet in frame? (Phase 4.5 seed of calibration.) */
+  private drawFraming(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void {
+    if (this.phase === 'over') return;
+    const ok = frame.pose ? limbsFramed(frame.pose).allVisible : false;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = `${Math.round(ctx.canvas.width / 64)}px ui-monospace, monospace`;
+    ctx.fillStyle = ok ? 'rgba(74, 240, 160, 0.85)' : 'rgba(255, 190, 70, 0.95)';
+    ctx.fillText(
+      ok ? '✓ framed' : 'step back — show both hands & both feet',
+      ctx.canvas.width / 2,
+      ctx.canvas.height - Math.round(ctx.canvas.height / 40),
+    );
+    ctx.restore();
   }
 
   score(): number {
@@ -150,7 +184,7 @@ class HoleInWall implements JukeGame {
 
   private drawWall(ctx: CanvasRenderingContext2D, rect: Rect): void {
     const sr = this.scaledRect(rect);
-    const inWindow = this.z >= WINDOW_START || this.phase === 'result';
+    const inWindow = this.z >= debugParams.windowStart || this.phase === 'result';
 
     // Punch the pose hole out of the panel on an offscreen canvas, then composite.
     if (wallCanvas.width !== ctx.canvas.width || wallCanvas.height !== ctx.canvas.height) {
@@ -222,6 +256,18 @@ class HoleInWall implements JukeGame {
     ctx.font = `${Math.round(cw / 52)}px ui-monospace, monospace`;
     ctx.fillStyle = 'rgba(155, 236, 255, 0.9)';
     ctx.fillText(`Score ${this.scoreValue}`, cw / 2, Math.round(ch / 28) + Math.round(cw / 30));
+
+    // Live overlap readout for tuning (press D).
+    if (isDebugOn()) {
+      const min = this.minRatio === Infinity ? 0 : this.minRatio;
+      ctx.font = `${Math.round(cw / 64)}px ui-monospace, monospace`;
+      ctx.fillStyle = 'rgba(232, 236, 244, 0.8)';
+      ctx.fillText(
+        `overlap ${this.liveRatio.toFixed(3)}  ·  best ${min.toFixed(3)}  ·  TOL ${debugParams.tol.toFixed(3)}`,
+        cw / 2,
+        Math.round(ch / 28) + Math.round(cw / 16),
+      );
+    }
 
     // Verdict flash.
     if (this.phase === 'result') {

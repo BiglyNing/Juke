@@ -40,6 +40,35 @@ export function jointAngle(a: Point, b: Point, c: Point): number {
   return Math.acos(cos) * DEG;
 }
 
+// MediaPipe pose landmark indices for the four limb extremities.
+const WRIST_L = 15;
+const WRIST_R = 16;
+const ANKLE_L = 27;
+const ANKLE_R = 28;
+
+export interface FramingState {
+  wristL: boolean;
+  wristR: boolean;
+  ankleL: boolean;
+  ankleR: boolean;
+  /** True only when all four limbs are visible above the threshold. */
+  allVisible: boolean;
+}
+
+/**
+ * The crude framing gate (Phase 4.5, seed of Phase 5 calibration): are all four
+ * limb extremities (both wrists, both ankles) visible above `threshold`? If not,
+ * the player is too close / cut off and leniency tuning would be wrong.
+ */
+export function limbsFramed(pose: Point[], threshold = 0.5): FramingState {
+  const vis = (i: number): boolean => (pose[i]?.visibility ?? 0) >= threshold;
+  const wristL = vis(WRIST_L);
+  const wristR = vis(WRIST_R);
+  const ankleL = vis(ANKLE_L);
+  const ankleR = vis(ANKLE_R);
+  return { wristL, wristR, ankleL, ankleR, allVisible: wristL && wristR && ankleL && ankleR };
+}
+
 export interface FingerStates {
   thumb: boolean;
   index: boolean;
