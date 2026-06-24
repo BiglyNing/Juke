@@ -36,7 +36,7 @@ Phases are checked off as their exit criteria are met. **P0–P8 are in** (produ
 | P6 — Hand Simon-Says | ✅ done | Seated gesture game on the Gesture Recognizer |
 | P7 — juice layer | ✅ done | Particles/shake/time-warp services, procedural Web-Audio music+SFX, neon silhouette + trail, crack meter, WebM replay-clip capture |
 | P8 — share card & leaderboard | ✅ done | PNG neon-duotone share card (download + clipboard) from the freeze-frame; localStorage daily/all-time best surfaced on the menu + game-over. Daily seed left for later (optional). |
-| P9 — submission artifacts | ⬜ next | README GIF, demo video, attract mode |
+| P9 — submission artifacts | ◐ in progress | **Attract mode done** (menu/landing replays the bundled fixture as a looping neon-silhouette ghost — finally gives `drawNeonSilhouette` a caller); README front-door ready. **Remaining (manual):** record the demo GIF/video from the in-app "Save clip" WebM, and smoke-test the deployed link on a fresh machine. |
 | P10 — Dodge (3rd mode) | ⬜ | Cuttable |
 | P11 — visual identity & ship | ⬜ | Art-direction pass, mascot, refreshed artifact |
 
@@ -537,7 +537,7 @@ Concrete notes so the next phase doesn't start from a blank page. Grouped by the
 **HUD / shell**
 - **Combo + health/crack meter (deferred from P5).** Let a game *optionally* expose `combo()` / `health()` (0..1); the shell HUD renders them when present and nothing when absent — the same opt-in pattern as `configure?`. The crack meter is really the P7 soft-fail mechanic surfaced in the HUD.
 - **Shared canvas easing.** When juice (P7) starts tweening on the canvas, add easing helpers to `shell/theme.ts` mirroring the CSS `--ease-*` tokens so DOM and canvas motion match. (They were removed for now to avoid dead code — re-add them with their first real caller.)
-- **Attract / idle mode (P9).** The menu's idle backdrop (`Shell.drawIdle`) is the hook point — drop a looping silhouette ghost or a replayed fixture there so the first frame of the live link already moves.
+- **Attract / idle mode (P9).** ✅ Done — `Shell.drawIdle` draws an `Attract` (`shell/attract.ts`) that replays the bundled fixture through `drawNeonSilhouette`, so the menu/landing always shows a drifting silhouette ghost. The menu overlay was made slightly translucent so it reads through.
 
 **Hand Simon-Says — rich tier (P11 stretch)**
 - Beyond the 7 built-in labels: grade *arbitrary* poses from landmarks via `fingerStates` (already in `pose.ts`) + in-plane rotation — never on palm-facing depth (too noisy from one webcam). The target set becomes data instead of the model's fixed labels.

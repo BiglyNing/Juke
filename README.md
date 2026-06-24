@@ -4,7 +4,10 @@
 
 > Built for [Hack Club Horizons](https://hackclub.com/).
 
-![Juke demo](docs/demo.gif) <!-- TODO: drop a 15–30s gameplay GIF here before submitting -->
+![Juke demo](docs/demo.gif)
+<!-- TODO before submitting: record a 15–30s run in-app (play → game-over → "Save clip" → WebM),
+     convert it to a GIF, and save it as docs/demo.gif. Lead with a clean run + the crush moment,
+     then a few seconds of seated Hand Simon-Says so a non-stander sees something playable. -->
 
 ## The games
 
@@ -44,4 +47,4 @@ The build is phased to **de-risk the hardest part (in-browser webcam perception)
 
 ## Status
 
-🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with two complete modes — **Hole-in-the-Wall** (standing) and **Hand Simon-Says** (seated) — plus the full juice layer (audio + effects), a downloadable PNG result card, and a local daily/all-time leaderboard. Up next are the submission artifacts (README GIF, demo video, attract mode). See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.
+🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with two complete modes — **Hole-in-the-Wall** (standing) and **Hand Simon-Says** (seated) — plus the full juice layer (audio + effects), a downloadable PNG result card, a local daily/all-time leaderboard, and an always-moving **attract loop** on the menu (a looping silhouette ghost, so the first frame is never static). The remaining submission to-dos are content captures: the gameplay GIF above and a short demo video, plus a fresh-machine smoke test of the live link. See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.

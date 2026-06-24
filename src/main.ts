@@ -57,6 +57,8 @@ resize();
 // rolling replay-clip buffer.
 const engine = new Engine(canvas, drawOverlay, juice);
 const shell = new Shell(engine);
+// The menu/landing attract loop replays this bundled fixture (no camera needed).
+shell.loadAttract(sampleFixtureJson as unknown as Fixture);
 capture.attach(canvas);
 engine.start();
 
