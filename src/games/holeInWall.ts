@@ -25,19 +25,20 @@ import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
 import { limbsFramed } from '../engine/pose';
 import { type BodyProfile } from '../engine/calibration';
 import { holeFromProfile, pickVariation, rasterizeSolid, type Hole, type Variation } from './wall';
-import {
-  perceptionRect,
-  drawCameraFeed,
-  drawSilhouetteMask,
-  drawPoseSkeleton,
-} from '../render/perception';
+import { perceptionRect, drawCameraFeed, drawPoseSkeleton } from '../render/perception';
 import type { Rect } from '../render/canvas';
+import { juice } from '../juice/juice';
+import { audio } from '../juice/audio';
 import { debugParams, isDebugOn } from '../shell/debug';
 import { COLORS, FONT, rgba } from '../shell/theme';
 
-const RESULT_MS = 950; // how long the PASS/SQUASHED verdict lingers
+const RESULT_MS = 950; // how long the PASS/MISS verdict lingers
 const FAR_SCALE = 0.32; // how small the wall starts (fake depth)
 const MIN_PLAYER_AREA = 0.012; // fraction of cells that must be "you" to count
+const START_LIVES = 3; // misses allowed before the run ends (forgiving, not one-shot)
+// Extra approach time on early walls so a new player can read the pose; it fades
+// out as they pass walls, so the speed ramps *up* with skill, not down.
+const RAMP_BONUS_MS = 2200;
 
 type Phase = 'waiting' | 'approach' | 'result' | 'dead';
 
@@ -63,6 +64,9 @@ class HoleInWall implements JukeGame {
   private lastPass = false;
   private resultTimer = 0;
   private scoreValue = 0;
+  private lives = START_LIVES;
+  /** Set at the approach→result transition; render() fires the juice (it has the canvas). */
+  private pendingFx: { kind: 'pass' | 'crush'; fatal: boolean; near: boolean } | null = null;
 
   // Cached wall-solid rasterization (fixed per wall, so rasterize once).
   private solid: BinaryMask | null = null;
@@ -86,6 +90,8 @@ class HoleInWall implements JukeGame {
     this.lastPass = false;
     this.resultTimer = 0;
     this.scoreValue = 0;
+    this.lives = START_LIVES;
+    this.pendingFx = null;
   }
 
   /** Receive the shell's calibration profile and start the first wall. */
@@ -101,14 +107,17 @@ class HoleInWall implements JukeGame {
     if (this.phase === 'result') {
       this.resultTimer -= dt;
       if (this.resultTimer <= 0) {
-        if (this.lastPass) this.startWall(this.variation);
-        else this.phase = 'dead';
+        if (!this.lastPass) this.lives--;
+        // A miss costs a life but spawns the next wall; you're only out of the
+        // run once the lives are gone — so one fumbled pose isn't game over.
+        if (this.lives <= 0) this.phase = 'dead';
+        else this.startWall(this.variation);
       }
       return;
     }
 
     // approach
-    this.z = Math.min(1, this.z + dt / (debugParams.wallSecs * 1000));
+    this.z = Math.min(1, this.z + dt / this.wallMs());
     const ratio = this.judge(frame);
     if (ratio !== null) {
       this.liveRatio = ratio;
@@ -120,9 +129,61 @@ class HoleInWall implements JukeGame {
     if (this.z >= 1) {
       this.lastPass = this.judged && this.minRatio <= debugParams.tol;
       if (this.lastPass) this.scoreValue++;
+      // Queue the feedback stack for render() (which owns the canvas coords). A
+      // miss is "fatal" when it spends the last life; a pass that only just
+      // cleared the tolerance is a "near" miss worth a little shake.
+      const near =
+        this.lastPass && this.minRatio > debugParams.tol * 0.6 && this.minRatio !== Infinity;
+      this.pendingFx = { kind: this.lastPass ? 'pass' : 'crush', fatal: !this.lastPass && this.lives <= 1, near };
       this.phase = 'result';
       this.resultTimer = RESULT_MS;
     }
+  }
+
+  /** Fire the pass/crush juice + SFX. Called from render() so it has canvas coords. */
+  private fireFx(ctx: CanvasRenderingContext2D): void {
+    const fx = this.pendingFx;
+    if (!fx) return;
+    this.pendingFx = null;
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height * 0.46;
+    const unit = ctx.canvas.width;
+
+    if (fx.kind === 'pass') {
+      juice.fx.shockwave({ x: cx, y: cy, color: COLORS.ok, maxR: unit * 0.42 });
+      juice.fx.flash(COLORS.ok, 0.16, 260);
+      juice.particles.burst({
+        x: cx, y: cy, count: 46, color: rgba(COLORS.ok, 1), speed: unit / 2600,
+        life: 780, size: unit / 360, gravity: unit / 5_000_000, drag: 0.986,
+      });
+      juice.time.slowmo(0.5, 240);
+      audio.whoosh();
+      if (fx.near) {
+        juice.camera.shake(0.28);
+        audio.crack();
+      }
+    } else {
+      juice.fx.flash(COLORS.danger, fx.fatal ? 0.4 : 0.26, fx.fatal ? 460 : 300);
+      juice.camera.shake(fx.fatal ? 1 : 0.6);
+      juice.time.freeze(fx.fatal ? 240 : 130);
+      juice.particles.burst({
+        x: cx, y: cy, count: fx.fatal ? 90 : 54, color: rgba(COLORS.danger, 1),
+        speed: unit / 1900, life: 900, size: unit / 320, gravity: unit / 1_600_000, drag: 0.982,
+      });
+      audio.thud();
+      audio.crack();
+      if (fx.fatal) audio.duck(900);
+    }
+  }
+
+  /**
+   * How long the current wall takes to arrive (ms). Early walls get a bonus that
+   * fades as the score climbs, so the pace ramps up with skill. A struggling
+   * player (low score) keeps the slower, readable pace instead of being rushed.
+   */
+  private wallMs(): number {
+    const bonus = Math.max(0, RAMP_BONUS_MS - this.scoreValue * 550);
+    return debugParams.wallSecs * 1000 + bonus;
   }
 
   /** Generate the next wall from the calibrated profile, avoiding a repeat pose. */
@@ -165,18 +226,16 @@ class HoleInWall implements JukeGame {
     if (frame.video) drawCameraFeed(ctx, frame.video, rect);
 
     // `waiting` = the live preview the shell shows behind calibration/countdown.
+    // Camera feed + skeleton only — no teal body silhouette.
     if (this.phase === 'waiting') {
-      if (frame.silhouetteMask) {
-        drawSilhouetteMask(ctx, frame.silhouetteMask, frame.maskW, frame.maskH, rect, 0.5);
-      }
       if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
       return;
     }
 
+    this.fireFx(ctx); // pass/crush feedback, queued by update()
     this.drawWall(ctx, rect);
-    if (frame.silhouetteMask) {
-      drawSilhouetteMask(ctx, frame.silhouetteMask, frame.maskW, frame.maskH, rect, 0.6);
-    }
+    // No silhouette overlay during play — the live camera feed + pose skeleton
+    // show the player against the wall without the teal body fill on top.
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
     this.drawFraming(ctx, frame);
     this.drawGameplayText(ctx);
@@ -184,6 +243,11 @@ class HoleInWall implements JukeGame {
 
   score(): number {
     return this.scoreValue;
+  }
+
+  /** Lives as 0..1 — the shell HUD renders this as a crack meter. */
+  health(): number {
+    return Math.max(0, this.lives) / START_LIVES;
   }
 
   isOver(): boolean {
@@ -289,7 +353,16 @@ class HoleInWall implements JukeGame {
     ctx.textBaseline = 'top';
     ctx.font = `${Math.round(cw / 44)}px ${FONT.mono}`;
     ctx.fillStyle = rgba(COLORS.text, 0.95);
-    ctx.fillText(`MATCH:  ${this.variation?.name ?? ''}`, cw / 2, Math.round(ch * 0.12));
+    ctx.fillText(`MATCH:  ${this.variation?.name ?? ''}`, cw / 2, Math.round(ch * 0.1));
+
+    // Lives (hearts) so the player can see the run isn't one-shot.
+    ctx.font = `${Math.round(cw / 46)}px ${FONT.mono}`;
+    ctx.fillStyle = COLORS.magenta;
+    ctx.fillText(
+      '♥'.repeat(this.lives) + '♡'.repeat(Math.max(0, START_LIVES - this.lives)),
+      cw / 2,
+      Math.round(ch * 0.15),
+    );
 
     if (isDebugOn()) {
       const min = this.minRatio === Infinity ? 0 : this.minRatio;
@@ -298,7 +371,7 @@ class HoleInWall implements JukeGame {
       ctx.fillText(
         `overlap ${this.liveRatio.toFixed(3)}  ·  best ${min.toFixed(3)}  ·  TOL ${debugParams.tol.toFixed(3)}`,
         cw / 2,
-        Math.round(ch * 0.12) + Math.round(cw / 30),
+        Math.round(ch * 0.2),
       );
     }
 
@@ -306,7 +379,7 @@ class HoleInWall implements JukeGame {
       ctx.textBaseline = 'middle';
       ctx.font = `bold ${Math.round(cw / 16)}px ${FONT.display}`;
       ctx.fillStyle = this.lastPass ? rgba(COLORS.ok, 0.95) : rgba(COLORS.danger, 0.95);
-      ctx.fillText(this.lastPass ? 'PASS ✓' : 'SQUASHED ✕', cw / 2, ch / 2);
+      ctx.fillText(this.lastPass ? 'PASS ✓' : 'MISS ✕', cw / 2, ch / 2);
     }
     ctx.restore();
   }

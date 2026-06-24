@@ -33,6 +33,8 @@ export interface GameOverView {
   score: number;
   onRetry: () => void;
   onMenu: () => void;
+  /** When present, the screen shows the replay-clip preview + a "Save clip" button. */
+  clip?: { onSave: () => void };
 }
 
 // One root layer for all lifecycle screens, between the message overlay (z 40)
@@ -50,7 +52,11 @@ let countdownNumEl: HTMLElement | null = null;
 let hudEl: HTMLDivElement | null = null;
 let hudTitleEl: HTMLElement | null = null;
 let hudScoreEl: HTMLElement | null = null;
+let hudHealthEl: HTMLElement | null = null;
+let hudHealthFillEl: HTMLElement | null = null;
 let gameoverEl: HTMLDivElement | null = null;
+let gameoverClipEl: HTMLCanvasElement | null = null;
+let gameoverSaveEl: HTMLButtonElement | null = null;
 
 function root(): HTMLDivElement {
   if (!rootEl) {
@@ -173,16 +179,23 @@ export function setCountdown(text: string): void {
 
 // --- HUD -------------------------------------------------------------------
 
-export function showHud(title: string): void {
+export function showHud(title: string, hasHealth = false): void {
   if (!hudEl) {
     hudEl = el('div', 'hud');
     hudTitleEl = el('div', 'hud__title');
+    const left = el('div', 'hud__left');
+    hudHealthEl = el('div', 'hud__health');
+    hudHealthFillEl = el('div', 'hud__health-fill');
+    hudHealthEl.appendChild(hudHealthFillEl);
+    left.append(hudTitleEl, hudHealthEl);
     hudScoreEl = el('div', 'hud__score', '0');
-    hudEl.append(hudTitleEl, hudScoreEl);
+    hudEl.append(left, hudScoreEl);
     root().appendChild(hudEl);
   }
   if (hudTitleEl) hudTitleEl.textContent = title;
   if (hudScoreEl) hudScoreEl.textContent = '0';
+  if (hudHealthEl) hudHealthEl.style.display = hasHealth ? 'block' : 'none';
+  setHudHealth(1);
   hudEl.classList.add('show');
 }
 
@@ -192,6 +205,14 @@ export function setHudScore(score: number): void {
   hudScoreEl.classList.remove('pop');
   void hudScoreEl.offsetWidth;
   hudScoreEl.classList.add('pop');
+}
+
+/** Drain/fill the HUD crack meter (0..1). Goes red as it nears empty. */
+export function setHudHealth(health: number): void {
+  if (!hudHealthFillEl) return;
+  const h = Math.max(0, Math.min(1, health));
+  hudHealthFillEl.style.width = `${Math.round(h * 100)}%`;
+  hudHealthFillEl.classList.toggle('is-low', h <= 0.34);
 }
 
 function hideHud(): void {
@@ -208,12 +229,28 @@ export function showGameOver(view: GameOverView): void {
   }
   gameoverEl.replaceChildren();
 
+  gameoverClipEl = null;
+  gameoverSaveEl = null;
+
   const title = el('div', 'gameover__title wordmark', view.title);
   const scoreWrap = el('div', 'gameover__scorewrap');
   scoreWrap.append(
     el('div', 'gameover__scorelabel', 'SCORE'),
     el('div', 'gameover__score', String(view.score)),
   );
+
+  gameoverEl.append(title, scoreWrap);
+
+  // Replay clip preview + save (Phase 7), only when a clip was captured.
+  if (view.clip) {
+    const clipRow = el('div', 'gameover__cliprow');
+    gameoverClipEl = el('canvas', 'gameover__clip');
+    gameoverSaveEl = el('button', 'btn btn--ghost', 'Save clip ⬇');
+    gameoverSaveEl.type = 'button';
+    gameoverSaveEl.addEventListener('click', view.clip.onSave);
+    clipRow.append(gameoverClipEl, gameoverSaveEl);
+    gameoverEl.appendChild(clipRow);
+  }
 
   const actions = el('div', 'gameover__actions');
   const retry = el('button', 'btn', 'Retry');
@@ -226,8 +263,18 @@ export function showGameOver(view: GameOverView): void {
 
   const hint = el('p', 'gameover__hint', 'Enter to retry · Esc for menu');
 
-  gameoverEl.append(title, scoreWrap, actions, hint);
+  gameoverEl.append(actions, hint); // title/score/clip already appended above
   gameoverEl.classList.add('show');
+}
+
+/** The game-over replay-clip canvas (Phase 7), or null when no clip was shown. */
+export function gameOverClipCanvas(): HTMLCanvasElement | null {
+  return gameoverClipEl;
+}
+
+/** Update the "Save clip" button label (e.g. while exporting). */
+export function setClipSaveLabel(text: string): void {
+  if (gameoverSaveEl) gameoverSaveEl.textContent = text;
 }
 
 // --- shared ----------------------------------------------------------------

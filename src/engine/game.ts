@@ -47,6 +47,13 @@ export interface JukeGame {
   render(ctx: CanvasRenderingContext2D, frame: PerceptionFrame): void;
   /** Current score. */
   score(): number;
+  /**
+   * Optional (Phase 7): remaining health as 0..1 (1 = full). When a game exposes
+   * it, the shell HUD renders a "crack meter" that drains as the run frays; games
+   * without a soft-fail mechanic omit it and the HUD shows none — the same opt-in
+   * pattern as `configure?`.
+   */
+  health?(): number;
   /** True when the run has ended (the shell reads this in Phase 5). */
   isOver(): boolean;
   /** Return to a fresh, pre-run state. Called before `init` on (re)activation. */

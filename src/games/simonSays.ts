@@ -18,6 +18,8 @@
 import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
 import type { PerceptionFrame } from '../engine/frame';
 import { perceptionRect, drawCameraFeed, drawHandSkeleton } from '../render/perception';
+import { juice } from '../juice/juice';
+import { audio } from '../juice/audio';
 import { COLORS, FONT, rgba } from '../shell/theme';
 
 interface Sign {
@@ -62,6 +64,8 @@ class SimonSays implements JukeGame {
   private streak = 0;
   private lives = START_LIVES;
   private feedback: { kind: 'hit' | 'miss'; ms: number } | null = null;
+  /** Set at a hit/miss in update(); render() fires the juice (it has the canvas). */
+  private pendingFx: 'hit' | 'miss' | 'dead' | null = null;
 
   init(): void {
     /* engine calls reset() before init; nothing else to allocate */
@@ -74,6 +78,7 @@ class SimonSays implements JukeGame {
     this.lives = START_LIVES;
     this.feedback = null;
     this.armed = false;
+    this.pendingFx = null;
   }
 
   /** The shell's "begin the run" signal (after seated calibration + countdown). */
@@ -82,6 +87,7 @@ class SimonSays implements JukeGame {
     this.streak = 0;
     this.lives = START_LIVES;
     this.feedback = null;
+    this.pendingFx = null;
     // First target avoids Open Palm, since seated calibration just had the player
     // show an open hand — otherwise round 1 could auto-complete.
     this.target = this.pickSign('Open_Palm');
@@ -107,6 +113,7 @@ class SimonSays implements JukeGame {
       this.scoreValue++;
       this.streak++;
       this.feedback = { kind: 'hit', ms: FEEDBACK_MS };
+      this.pendingFx = 'hit';
       this.nextRound();
       return;
     }
@@ -116,8 +123,39 @@ class SimonSays implements JukeGame {
       this.lives--;
       this.streak = 0;
       this.feedback = { kind: 'miss', ms: FEEDBACK_MS };
-      if (this.lives <= 0) this.phase = 'dead';
-      else this.nextRound();
+      if (this.lives <= 0) {
+        this.phase = 'dead';
+        this.pendingFx = 'dead';
+      } else {
+        this.pendingFx = 'miss';
+        this.nextRound();
+      }
+    }
+  }
+
+  /** Fire hit/miss juice + SFX. Called from render() with canvas coords. */
+  private fireFx(x: number, y: number, unit: number): void {
+    const fx = this.pendingFx;
+    if (!fx) return;
+    this.pendingFx = null;
+    if (fx === 'hit') {
+      juice.fx.flash(COLORS.ok, 0.12, 220);
+      juice.particles.burst({
+        x, y, count: 34, color: rgba(COLORS.ok, 1), speed: unit / 2400,
+        life: 680, size: unit / 380, gravity: unit / 6_000_000, drag: 0.985,
+      });
+      audio.whoosh();
+      if (this.streak > 0 && this.streak % 5 === 0) audio.sting(); // streak milestone flourish
+    } else {
+      juice.fx.flash(COLORS.danger, fx === 'dead' ? 0.34 : 0.2, fx === 'dead' ? 420 : 280);
+      juice.camera.shake(fx === 'dead' ? 0.8 : 0.4);
+      if (fx === 'dead') {
+        juice.time.freeze(220);
+        audio.thud();
+        audio.duck(900);
+      } else {
+        audio.crack();
+      }
     }
   }
 
@@ -140,6 +178,11 @@ class SimonSays implements JukeGame {
     return this.scoreValue;
   }
 
+  /** Lives as 0..1 — the shell HUD renders this as a crack meter. */
+  health(): number {
+    return Math.max(0, this.lives) / START_LIVES;
+  }
+
   isOver(): boolean {
     return this.phase === 'dead';
   }
@@ -153,8 +196,17 @@ class SimonSays implements JukeGame {
 
     const g = frame.gestures && frame.gestures.length > 0 ? frame.gestures[0] : null;
     const matching = playing && this.armed && g?.name === this.target.label && g.score >= MATCH_SCORE;
-    if (frame.hands && frame.hands.length > 0) {
-      drawHandSkeleton(ctx, frame.hands[0], rect, matching ? COLORS.ok : COLORS.teal);
+    const hand = frame.hands && frame.hands.length > 0 ? frame.hands[0] : null;
+    if (hand) {
+      drawHandSkeleton(ctx, hand, rect, matching ? COLORS.ok : COLORS.teal);
+    }
+
+    // Fire queued juice at the hand (palm landmark) if visible, else screen center.
+    if (this.pendingFx) {
+      const palm = hand?.[9];
+      const x = palm ? rect.x + (1 - palm.x) * rect.w : ctx.canvas.width / 2;
+      const y = palm ? rect.y + palm.y * rect.h : ctx.canvas.height / 2;
+      this.fireFx(x, y, ctx.canvas.width);
     }
 
     if (playing) this.drawRound(ctx, g);

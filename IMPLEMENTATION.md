@@ -23,7 +23,7 @@ Legend for each phase: **Goal** · **Why here** · **Tasks** · **Exit criteria*
 
 ## Build status (living)
 
-Phases are checked off as their exit criteria are met. **P0–P6 are in and verified** (production build + 34 unit tests green); the live-webcam parts of each exit criterion are validated by hand, not in CI.
+Phases are checked off as their exit criteria are met. **P0–P7 are in** (production build + 50 unit tests green); the live-webcam / live-audio parts of each exit criterion are validated by hand, not in CI.
 
 | Phase | Status | Notes |
 | --- | --- | --- |
@@ -34,8 +34,8 @@ Phases are checked off as their exit criteria are met. **P0–P6 are in and veri
 | P4 — minimal Hole-in-the-Wall | ✅ done | Profile-fitted walls, `maskOverlap` judging, leniency dials |
 | P5 — game shell | ✅ done | CRT-vaporwave design system, menu, calibration, countdown, HUD, game-over, model-load screen |
 | P6 — Hand Simon-Says | ✅ done | Seated gesture game on the Gesture Recognizer |
-| P7 — juice layer | ⬜ next | Audio + crush-moment stack + GIF capture path |
-| P8 — share card & leaderboard | ⬜ | Client-side, no backend |
+| P7 — juice layer | ✅ done | Particles/shake/time-warp services, procedural Web-Audio music+SFX, neon silhouette + trail, crack meter, WebM replay-clip capture |
+| P8 — share card & leaderboard | ⬜ next | Client-side, no backend |
 | P9 — submission artifacts | ⬜ | README GIF, demo video, attract mode |
 | P10 — Dodge (3rd mode) | ⬜ | Cuttable |
 | P11 — visual identity & ship | ⬜ | Art-direction pass, mascot, refreshed artifact |
@@ -43,6 +43,7 @@ Phases are checked off as their exit criteria are met. **P0–P6 are in and veri
 **Contract evolution so far (vs the Phase 3 sketch).** The seam held: two games and a whole shell were added with only two small, deliberate extensions —
 - **P5** added `JukeGame.configure?(CalibrationResult)` (the shell hands a game its calibration output at the moment play begins) and `Engine.clearActiveGame()`.
 - **P6** added `PerceptionFrame.gestures` (the Gesture Recognizer's top built-in label per hand) so Simon-Says can match by label. Everything else about the second game was *one new file + registration*, exactly as the contract intended.
+- **P7** added two small, optional seams and held the rest: `Engine` now takes an optional `FrameModulator` (the juice manager supplies `timeScale()` for freeze/slow-mo and `cameraOffset()` for screen shake — the engine stays ignorant of what juice *is*), and `JukeGame.health?()` lets a game opt into the HUD crack meter (same pattern as `configure?`). Both games wired their pass/crush/hit/miss feedback by *calling* the juice services at the events they already computed — no change to the per-frame contract.
 
 See **Appendix — Architecture as built** for the realized layering and the "add a new game" checklist.
 

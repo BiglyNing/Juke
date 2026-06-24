@@ -19,6 +19,9 @@ import { allGames, getGame, type JukeGame, type CalibrationResult } from '../eng
 import type { Producer } from '../engine/producer';
 import { Calibrator, canCalibrate } from '../engine/calibration';
 import { limbsFramed } from '../engine/pose';
+import { audio } from '../juice/audio';
+import { juice } from '../juice/juice';
+import { capture } from '../juice/capture';
 import { COLORS, rgba } from './theme';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
@@ -56,6 +59,8 @@ export class Shell {
   private hudScore = -1;
   /** True once the lazy hand model has loaded — so we only show its loader once. */
   private handsReady = false;
+  /** Stops the game-over replay-clip loop when we leave the screen. */
+  private stopClipPreview: (() => void) | null = null;
 
   constructor(engine: Engine) {
     this.engine = engine;
@@ -93,6 +98,9 @@ export class Shell {
     this.state = 'menu';
     this.game = null;
     this.gameId = null;
+    this.clearClipPreview();
+    audio.startMusic(); // looping menu track (idempotent; no-op until audio is unlocked)
+    audio.setIntensity(0);
     this.engine.clearActiveGame();
     screens.showMenu(
       allGames()
@@ -225,6 +233,7 @@ export class Shell {
     this.cdTimer = COUNTDOWN[0].ms;
     screens.showCountdown();
     screens.setCountdown(COUNTDOWN[0].text);
+    audio.beep(0); // "3"
   }
 
   private tickCountdown(frame: PerceptionFrame | null): void {
@@ -237,6 +246,7 @@ export class Shell {
     }
     this.cdTimer = COUNTDOWN[this.cdIndex].ms;
     screens.setCountdown(COUNTDOWN[this.cdIndex].text);
+    audio.beep(this.cdIndex); // "2" / "1" rising, then the "GO" downbeat
   }
 
   // --- play / game over ---------------------------------------------------
@@ -244,11 +254,13 @@ export class Shell {
   private startPlay(): void {
     const game = this.game;
     if (!game) return;
+    juice.reset(); // clear any stray effects from the previous run
+    capture.start(); // begin the rolling replay-clip buffer
     game.configure?.(this.result ?? { profile: null });
     this.state = 'play';
     this.hudScore = -1;
     screens.hideAll(); // clear the countdown ("GO") before the HUD goes up
-    screens.showHud(game.title);
+    screens.showHud(game.title, typeof game.health === 'function');
   }
 
   private tickPlay(): void {
@@ -262,23 +274,51 @@ export class Shell {
     if (s !== this.hudScore) {
       this.hudScore = s;
       screens.setHudScore(s);
+      // Music tightens as the run climbs (tempo up, lead octave past the midpoint).
+      audio.setIntensity(Math.min(1, s / 12));
     }
+    if (game.health) screens.setHudHealth(game.health());
   }
 
   private toGameOver(): void {
     const score = this.game?.score() ?? 0;
     this.state = 'gameover';
+    capture.stop(); // freeze the buffer; keep it for the preview + export
+    audio.setIntensity(0);
     this.engine.clearActiveGame();
+    const hasClip = capture.hasClip();
     screens.showGameOver({
       title: 'GAME OVER',
       score,
       onRetry: () => void this.retry(),
       onMenu: () => void this.enterMenu(),
+      clip: hasClip ? { onSave: () => void this.saveClip() } : undefined,
     });
+    const clipCanvas = screens.gameOverClipCanvas();
+    if (clipCanvas) this.stopClipPreview = capture.playPreview(clipCanvas);
+  }
+
+  /** Export the last couple of seconds to a WebM and download it (Phase 7). */
+  private async saveClip(): Promise<void> {
+    screens.setClipSaveLabel('Saving…');
+    audio.click();
+    const blob = await capture.exportWebM();
+    if (blob) {
+      capture.download(blob);
+      screens.setClipSaveLabel('Saved ✓');
+    } else {
+      screens.setClipSaveLabel('Not supported');
+    }
+  }
+
+  private clearClipPreview(): void {
+    this.stopClipPreview?.();
+    this.stopClipPreview = null;
   }
 
   private async retry(): Promise<void> {
     if (!this.gameId) return;
+    this.clearClipPreview();
     // Re-arm the same game (reset → waiting preview) and reuse the profile.
     await this.engine.setActiveGame(this.gameId);
     this.toCountdown();

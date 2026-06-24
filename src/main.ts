@@ -20,6 +20,9 @@ import {
 } from './shell/debug';
 import { containRect, drawMirrored, type Rect } from './render/canvas';
 import { Shell } from './shell/app';
+import { juice } from './juice/juice';
+import { audio } from './juice/audio';
+import { capture } from './juice/capture';
 import sampleFixtureJson from './engine/__fixtures__/sample.json';
 
 // Registering a game is a side-effect import. Adding a game = import its module.
@@ -49,8 +52,12 @@ resize();
 // debug collision grid, and fixture record/replay.
 // ---------------------------------------------------------------------------
 
-const engine = new Engine(canvas, drawOverlay);
+// `juice` doubles as the engine's FrameModulator: it bends simulation time
+// (freeze / slow-mo) and shakes the camera. `capture` samples this canvas into a
+// rolling replay-clip buffer.
+const engine = new Engine(canvas, drawOverlay, juice);
 const shell = new Shell(engine);
+capture.attach(canvas);
 engine.start();
 
 let liveProducer: Producer | null = null;
@@ -73,6 +80,13 @@ function drawOverlay(
   stats: FrameStats,
 ): void {
   shell.tick(ctx, frame, stats);
+
+  // Juice: advance every effect on real time, then draw it over the game. Sample
+  // the composited frame into the replay buffer *before* the dev HUD/grid so
+  // clips stay clean.
+  juice.update(stats.now);
+  juice.render(ctx);
+  capture.sample(stats.now);
 
   if (frame) {
     const srcW = frame.video?.videoWidth || frame.maskW || ctx.canvas.width;
@@ -201,6 +215,9 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'd') {
     toggleDebug();
+  } else if (k === 'm') {
+    audio.toggleMute();
+    syncMuteButton();
   } else if (k === 'r') {
     if (!recorder.active) {
       recorder.start(90);
@@ -211,6 +228,26 @@ window.addEventListener('keydown', (e) => {
     void replayFixture(sampleFixtureJson as unknown as Fixture);
   }
 });
+
+// --- Mute toggle (Phase 7): always-reachable so a reviewer can silence the tab.
+const muteBtn = document.createElement('button');
+muteBtn.className = 'mute-btn';
+muteBtn.type = 'button';
+muteBtn.setAttribute('aria-label', 'Toggle sound');
+muteBtn.title = 'Toggle sound (M)';
+muteBtn.addEventListener('click', () => {
+  audio.unlock(); // a click here also satisfies the autoplay gesture requirement
+  audio.toggleMute();
+  syncMuteButton();
+});
+document.body.appendChild(muteBtn);
+
+function syncMuteButton(): void {
+  const muted = audio.isMuted();
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  muteBtn.classList.toggle('is-muted', muted);
+}
+syncMuteButton();
 
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
@@ -237,6 +274,7 @@ async function replayFixture(fixture: Fixture): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function start(): Promise<void> {
+  audio.unlock(); // this click is the user gesture browsers require to start audio
   let camera: CameraHandle;
   try {
     showOverlay({ title: 'Starting camera…', body: 'Allow camera access if your browser asks.' });
