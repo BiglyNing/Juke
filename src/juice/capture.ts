@@ -80,6 +80,15 @@ class Capture {
     return this.buffer.length >= 4;
   }
 
+  /**
+   * The most recent captured frame — i.e. the death freeze-frame — or null if the
+   * buffer is empty. Clean (sampled before the dev HUD/grid), so it's the right
+   * source for the Phase 8 share card.
+   */
+  lastFrame(): HTMLCanvasElement | null {
+    return this.buffer.length ? this.buffer[this.buffer.length - 1].canvas : null;
+  }
+
   /** Loop the buffered clip into `target` until the returned stop fn is called. */
   playPreview(target: HTMLCanvasElement): () => void {
     cancelAnimationFrame(this.previewRaf);

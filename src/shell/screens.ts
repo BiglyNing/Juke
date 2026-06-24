@@ -15,6 +15,8 @@ export interface MenuCard {
   title: string;
   intensity: 'standing' | 'seated';
   blurb: string;
+  /** All-time best for this game (Phase 8), shown when > 0. */
+  best?: number;
 }
 
 export interface CalibView {
@@ -31,10 +33,14 @@ export interface CalibView {
 export interface GameOverView {
   title: string;
   score: number;
+  /** All-time best to show under the score (Phase 8); `isRecord` flags a new best. */
+  best?: { value: number; isRecord: boolean };
   onRetry: () => void;
   onMenu: () => void;
-  /** When present, the screen shows the replay-clip preview + a "Save clip" button. */
+  /** When present, the screen loops the replay clip in the preview + a "Save clip" button (Phase 7). */
   clip?: { onSave: () => void };
+  /** When present, a "Save image" button exports the PNG share card (Phase 8). */
+  share?: { onSave: () => void };
 }
 
 // One root layer for all lifecycle screens, between the message overlay (z 40)
@@ -55,8 +61,9 @@ let hudScoreEl: HTMLElement | null = null;
 let hudHealthEl: HTMLElement | null = null;
 let hudHealthFillEl: HTMLElement | null = null;
 let gameoverEl: HTMLDivElement | null = null;
-let gameoverClipEl: HTMLCanvasElement | null = null;
-let gameoverSaveEl: HTMLButtonElement | null = null;
+let gameoverPreviewEl: HTMLCanvasElement | null = null;
+let gameoverClipSaveEl: HTMLButtonElement | null = null;
+let gameoverShareSaveEl: HTMLButtonElement | null = null;
 
 function root(): HTMLDivElement {
   if (!rootEl) {
@@ -101,6 +108,7 @@ export function showMenu(cards: MenuCard[], onSelect: (id: string) => void): voi
     const badge = el('span', `card__badge card__badge--${c.intensity}`, c.intensity);
     const blurb = el('p', 'card__blurb', c.blurb);
     card.append(badge, title, blurb);
+    if (c.best && c.best > 0) card.append(el('div', 'card__best', `BEST ${c.best}`));
     card.addEventListener('click', () => onSelect(c.id));
     grid.appendChild(card);
   }
@@ -229,8 +237,9 @@ export function showGameOver(view: GameOverView): void {
   }
   gameoverEl.replaceChildren();
 
-  gameoverClipEl = null;
-  gameoverSaveEl = null;
+  gameoverPreviewEl = null;
+  gameoverClipSaveEl = null;
+  gameoverShareSaveEl = null;
 
   const title = el('div', 'gameover__title wordmark', view.title);
   const scoreWrap = el('div', 'gameover__scorewrap');
@@ -238,19 +247,39 @@ export function showGameOver(view: GameOverView): void {
     el('div', 'gameover__scorelabel', 'SCORE'),
     el('div', 'gameover__score', String(view.score)),
   );
+  if (view.best) {
+    const best = el(
+      'div',
+      `gameover__best${view.best.isRecord ? ' is-record' : ''}`,
+      view.best.isRecord ? `★ NEW BEST ${view.best.value}` : `BEST ${view.best.value}`,
+    );
+    scoreWrap.appendChild(best);
+  }
 
   gameoverEl.append(title, scoreWrap);
 
-  // Replay clip preview + save (Phase 7), only when a clip was captured.
-  if (view.clip) {
-    const clipRow = el('div', 'gameover__cliprow');
-    gameoverClipEl = el('canvas', 'gameover__clip');
-    gameoverSaveEl = el('button', 'btn btn--ghost', 'Save clip ⬇');
-    gameoverSaveEl.type = 'button';
-    gameoverSaveEl.addEventListener('click', view.clip.onSave);
-    clipRow.append(gameoverClipEl, gameoverSaveEl);
-    gameoverEl.appendChild(clipRow);
+  // Preview hero + exports (Phase 7 clip · Phase 8 share card). The preview canvas
+  // always exists — the shell loops the replay clip into it, or (no clip) blits the
+  // static share card — so the screen is never a bare wall of buttons.
+  const previewRow = el('div', 'gameover__cliprow');
+  gameoverPreviewEl = el('canvas', 'gameover__clip');
+  previewRow.appendChild(gameoverPreviewEl);
+
+  const exports = el('div', 'gameover__exports');
+  if (view.share) {
+    gameoverShareSaveEl = el('button', 'btn btn--ghost', 'Save image ⬇');
+    gameoverShareSaveEl.type = 'button';
+    gameoverShareSaveEl.addEventListener('click', view.share.onSave);
+    exports.appendChild(gameoverShareSaveEl);
   }
+  if (view.clip) {
+    gameoverClipSaveEl = el('button', 'btn btn--ghost', 'Save clip ⬇');
+    gameoverClipSaveEl.type = 'button';
+    gameoverClipSaveEl.addEventListener('click', view.clip.onSave);
+    exports.appendChild(gameoverClipSaveEl);
+  }
+  if (exports.childElementCount) previewRow.appendChild(exports);
+  gameoverEl.appendChild(previewRow);
 
   const actions = el('div', 'gameover__actions');
   const retry = el('button', 'btn', 'Retry');
@@ -263,18 +292,23 @@ export function showGameOver(view: GameOverView): void {
 
   const hint = el('p', 'gameover__hint', 'Enter to retry · Esc for menu');
 
-  gameoverEl.append(actions, hint); // title/score/clip already appended above
+  gameoverEl.append(actions, hint); // title/score/preview already appended above
   gameoverEl.classList.add('show');
 }
 
-/** The game-over replay-clip canvas (Phase 7), or null when no clip was shown. */
-export function gameOverClipCanvas(): HTMLCanvasElement | null {
-  return gameoverClipEl;
+/** The game-over preview canvas — looped clip (Phase 7) or static share card (Phase 8). */
+export function gameOverPreviewCanvas(): HTMLCanvasElement | null {
+  return gameoverPreviewEl;
 }
 
 /** Update the "Save clip" button label (e.g. while exporting). */
 export function setClipSaveLabel(text: string): void {
-  if (gameoverSaveEl) gameoverSaveEl.textContent = text;
+  if (gameoverClipSaveEl) gameoverClipSaveEl.textContent = text;
+}
+
+/** Update the "Save image" (share card) button label. */
+export function setShareSaveLabel(text: string): void {
+  if (gameoverShareSaveEl) gameoverShareSaveEl.textContent = text;
 }
 
 // --- shared ----------------------------------------------------------------

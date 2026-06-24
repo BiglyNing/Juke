@@ -477,6 +477,15 @@ body {
   font-size: var(--fs-1);
   line-height: 1.5;
 }
+/* Persisted all-time best (Phase 8) — only shown once a game has been played. */
+.card__best {
+  margin-top: var(--sp-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  letter-spacing: 0.14em;
+  color: var(--sunset);
+  font-variant-numeric: tabular-nums;
+}
 
 /* --- Calibration panel (click-through; silhouette shows behind) --- */
 .calib {
@@ -666,9 +675,10 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-5);
-  padding: var(--sp-6);
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
   pointer-events: auto;
+  overflow-y: auto; /* safety net: scroll rather than clip on short windows */
   background:
     radial-gradient(ellipse 80% 60% at 50% 40%, rgba(255, 79, 126, 0.14), transparent 60%),
     rgba(12, 10, 28, 0.86);
@@ -700,6 +710,33 @@ body {
   text-shadow: 0 0 24px rgba(46, 230, 200, 0.5);
   font-variant-numeric: tabular-nums;
 }
+/* Persisted best / new-record line (Phase 8). */
+.gameover__best {
+  margin-top: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.gameover__best.is-record {
+  color: var(--sunset);
+  text-shadow: 0 0 18px rgba(255, 159, 69, 0.5);
+  animation: best-pop var(--dur-slow) var(--ease-out);
+}
+@keyframes best-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
 .gameover__actions {
   display: flex;
   gap: var(--sp-4);
@@ -715,7 +752,7 @@ body {
 /* Replay clip (Phase 7): the looping last-2s preview on the game-over screen. */
 .gameover__clip {
   display: block;
-  width: min(22rem, 70vw);
+  width: min(20rem, 60vw);
   height: auto;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
@@ -728,6 +765,13 @@ body {
   flex-direction: column;
   align-items: center;
   gap: var(--sp-3);
+}
+/* Export buttons under the preview (Phase 8 share card · Phase 7 clip). */
+.gameover__exports {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 /* =====================================================================

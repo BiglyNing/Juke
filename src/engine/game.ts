@@ -54,6 +54,12 @@ export interface JukeGame {
    * pattern as `configure?`.
    */
   health?(): number;
+  /**
+   * Optional (Phase 8): a short flavor line for the share card / game-over screen
+   * — e.g. the pose that crushed you, or a top streak. Games that have nothing to
+   * say omit it (same opt-in pattern as `configure?` / `health?`).
+   */
+  tagline?(): string;
   /** True when the run has ended (the shell reads this in Phase 5). */
   isOver(): boolean;
   /** Return to a fresh, pre-run state. Called before `init` on (re)activation. */

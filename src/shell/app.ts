@@ -25,6 +25,8 @@ import { capture } from '../juice/capture';
 import { COLORS, rgba } from './theme';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
+import { leaderboard } from './leaderboard';
+import { renderShareCard, cardToBlob, downloadCard, copyCard } from './shareCard';
 import * as screens from './screens';
 
 type State = 'title' | 'menu' | 'calibrate' | 'countdown' | 'play' | 'gameover' | 'replay';
@@ -61,6 +63,10 @@ export class Shell {
   private handsReady = false;
   /** Stops the game-over replay-clip loop when we leave the screen. */
   private stopClipPreview: (() => void) | null = null;
+  /** Reused offscreen canvas the death share card (Phase 8) is rendered into. */
+  private shareCanvas = document.createElement('canvas');
+  /** The finished run's score — for stamping the saved share-card filename. */
+  private lastScore = 0;
 
   constructor(engine: Engine) {
     this.engine = engine;
@@ -110,6 +116,7 @@ export class Shell {
           title: g.title,
           intensity: g.intensity,
           blurb: BLURBS[g.id] ?? '',
+          best: leaderboard.bests(g.id).allTime, // persisted across reloads (Phase 8)
         })),
       (id) => void this.selectGame(id),
     );
@@ -281,21 +288,50 @@ export class Shell {
   }
 
   private toGameOver(): void {
-    const score = this.game?.score() ?? 0;
+    const game = this.game;
+    const score = game?.score() ?? 0;
+    this.lastScore = score;
+    // Read the game's flavor line before clearing it; build the card from the
+    // freeze-frame the (now-stopped) capture buffer still holds.
+    const tagline = game?.tagline?.() ?? '';
+    const title = game?.title ?? '';
     this.state = 'gameover';
+    this.clearClipPreview(); // stop any preview loop still running from a prior screen
     capture.stop(); // freeze the buffer; keep it for the preview + export
     audio.setIntensity(0);
+
+    // Record the run (persists across reloads) and render the share card (Phase 8).
+    const outcome = this.gameId ? leaderboard.record(this.gameId, score) : null;
+    const source = capture.lastFrame();
+    renderShareCard(this.shareCanvas, {
+      score,
+      game: title,
+      caption: tagline,
+      source,
+      sourceW: source?.width,
+      sourceH: source?.height,
+    });
+    if (outcome?.isAllTimeBest) audio.sting(); // celebrate a new personal best
+
     this.engine.clearActiveGame();
+
     const hasClip = capture.hasClip();
     screens.showGameOver({
       title: 'GAME OVER',
       score,
+      best: outcome ? { value: outcome.allTimeBest, isRecord: outcome.isAllTimeBest } : undefined,
       onRetry: () => void this.retry(),
       onMenu: () => void this.enterMenu(),
       clip: hasClip ? { onSave: () => void this.saveClip() } : undefined,
+      share: { onSave: () => void this.saveCard() },
     });
-    const clipCanvas = screens.gameOverClipCanvas();
-    if (clipCanvas) this.stopClipPreview = capture.playPreview(clipCanvas);
+
+    // Preview hero: loop the motion clip when we have one, else show the static card.
+    const preview = screens.gameOverPreviewCanvas();
+    if (preview) {
+      if (hasClip) this.stopClipPreview = capture.playPreview(preview);
+      else this.blitShareCard(preview);
+    }
   }
 
   /** Export the last couple of seconds to a WebM and download it (Phase 7). */
@@ -309,6 +345,27 @@ export class Shell {
     } else {
       screens.setClipSaveLabel('Not supported');
     }
+  }
+
+  /** Download the death share card as a PNG and copy it to the clipboard (Phase 8). */
+  private async saveCard(): Promise<void> {
+    screens.setShareSaveLabel('Saving…');
+    audio.click();
+    const blob = await cardToBlob(this.shareCanvas);
+    if (!blob) {
+      screens.setShareSaveLabel('Not supported');
+      return;
+    }
+    downloadCard(blob, `juke-${this.lastScore}.png`);
+    const copied = await copyCard(blob);
+    screens.setShareSaveLabel(copied ? 'Saved ✓ · copied' : 'Saved ✓');
+  }
+
+  /** Blit the rendered share card into the game-over preview canvas. */
+  private blitShareCard(preview: HTMLCanvasElement): void {
+    preview.width = this.shareCanvas.width;
+    preview.height = this.shareCanvas.height;
+    preview.getContext('2d')!.drawImage(this.shareCanvas, 0, 0);
   }
 
   private clearClipPreview(): void {

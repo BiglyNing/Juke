@@ -62,6 +62,7 @@ class SimonSays implements JukeGame {
   private armed = false;
   private scoreValue = 0;
   private streak = 0;
+  private maxStreak = 0;
   private lives = START_LIVES;
   private feedback: { kind: 'hit' | 'miss'; ms: number } | null = null;
   /** Set at a hit/miss in update(); render() fires the juice (it has the canvas). */
@@ -75,6 +76,7 @@ class SimonSays implements JukeGame {
     this.phase = 'waiting';
     this.scoreValue = 0;
     this.streak = 0;
+    this.maxStreak = 0;
     this.lives = START_LIVES;
     this.feedback = null;
     this.armed = false;
@@ -85,6 +87,7 @@ class SimonSays implements JukeGame {
   configure(): void {
     this.scoreValue = 0;
     this.streak = 0;
+    this.maxStreak = 0;
     this.lives = START_LIVES;
     this.feedback = null;
     this.pendingFx = null;
@@ -112,6 +115,7 @@ class SimonSays implements JukeGame {
     if (this.armed && g !== null && g.name === this.target.label && g.score >= MATCH_SCORE) {
       this.scoreValue++;
       this.streak++;
+      this.maxStreak = Math.max(this.maxStreak, this.streak);
       this.feedback = { kind: 'hit', ms: FEEDBACK_MS };
       this.pendingFx = 'hit';
       this.nextRound();
@@ -181,6 +185,11 @@ class SimonSays implements JukeGame {
   /** Lives as 0..1 — the shell HUD renders this as a crack meter. */
   health(): number {
     return Math.max(0, this.lives) / START_LIVES;
+  }
+
+  /** Share-card flavor: the best streak reached this run. */
+  tagline(): string {
+    return this.maxStreak > 0 ? `Top streak: ${this.maxStreak}` : 'Warming up';
   }
 
   isOver(): boolean {

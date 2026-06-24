@@ -44,4 +44,4 @@ The build is phased to **de-risk the hardest part (in-browser webcam perception)
 
 ## Status
 
-🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with two complete modes — **Hole-in-the-Wall** (standing) and **Hand Simon-Says** (seated). Up next is the juice layer (audio + effects), then the share card and submission artifacts. See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.
+🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with two complete modes — **Hole-in-the-Wall** (standing) and **Hand Simon-Says** (seated) — plus the full juice layer (audio + effects), a downloadable PNG result card, and a local daily/all-time leaderboard. Up next are the submission artifacts (README GIF, demo video, attract mode). See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.

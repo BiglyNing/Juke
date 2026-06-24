@@ -250,6 +250,11 @@ class HoleInWall implements JukeGame {
     return Math.max(0, this.lives) / START_LIVES;
   }
 
+  /** Share-card flavor: the pose on the wall that ended the run. */
+  tagline(): string {
+    return this.variation ? `Squashed by: ${this.variation.name}` : 'No-show';
+  }
+
   isOver(): boolean {
     return this.phase === 'dead';
   }
