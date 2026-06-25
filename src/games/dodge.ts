@@ -62,6 +62,11 @@ const DUCK_RANGE_MIN = 0.06;
 const DUCK_RANGE_MAX = 0.2;
 const DEFAULT_SWEEP_TOP = 0.16; // fallback head height (normalized)
 const DEFAULT_SWEEP_BOT = 0.32; // fallback duck floor
+// Telegraph: every object flashes a warning (edge marker + incoming lane) for
+// this long *before* it actually enters, so the hit is always readable, never a
+// surprise. The lead time shrinks as difficulty ramps — still a fair beat.
+const WARN_MAX_MS = 900;
+const WARN_MIN_MS = 520;
 
 type Phase = 'waiting' | 'play' | 'dead';
 
@@ -98,6 +103,13 @@ interface Obj {
   hit: boolean;
 }
 
+/** A spawned-but-not-yet-live object, showing its warning before it enters play. */
+interface Pending {
+  obj: Obj;
+  timer: number; // ms of warning left
+  max: number; // full warning duration (drives the pulse)
+}
+
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
@@ -109,6 +121,8 @@ class Dodge implements JukeGame {
 
   private phase: Phase = 'waiting';
   private objects: Obj[] = [];
+  /** Objects in their warning window — telegraphed but not yet collidable. */
+  private pending: Pending[] = [];
   private scoreValue = 0;
   private lives = START_LIVES;
   private elapsed = 0; // play time while the player is framed (drives difficulty)
@@ -167,6 +181,7 @@ class Dodge implements JukeGame {
   /** Reset run state (phase + calibration set by the caller). */
   private clear(): void {
     this.objects = [];
+    this.pending = [];
     this.scoreValue = 0;
     this.lives = START_LIVES;
     this.elapsed = 0;
@@ -194,6 +209,17 @@ class Dodge implements JukeGame {
         this.spawnTimer = this.spawnInterval();
       }
     }
+
+    // Advance telegraphs: a queued object waits out its warning, then enters play
+    // as a live, collidable object. Warnings tick regardless of framing so a
+    // telegraphed hit always resolves.
+    const stillWarning: Pending[] = [];
+    for (const p of this.pending) {
+      p.timer -= dt;
+      if (p.timer <= 0) this.objects.push(p.obj);
+      else stillWarning.push(p);
+    }
+    this.pending = stillWarning;
 
     const survivors: Obj[] = [];
     for (const o of this.objects) {
@@ -280,11 +306,23 @@ class Dodge implements JukeGame {
     return lerp(0.34, 0.92, this.diff()) / 1000;
   }
 
-  /**
-   * Spawn either a falling drop (avoided by stepping aside) or a horizontal
-   * sweeper at the calibrated duck-able height band (avoided by ducking).
-   */
+  /** Warning lead time before an object actually enters — longer when it's calm. */
+  private warnMs(): number {
+    return lerp(WARN_MAX_MS, WARN_MIN_MS, this.diff());
+  }
+
+  /** Queue an object behind a warning window rather than dropping it in cold. */
   private spawn(): void {
+    const max = this.warnMs();
+    this.pending.push({ obj: this.makeObject(), timer: max, max });
+  }
+
+  /**
+   * Build either a falling drop (avoided by stepping aside) or a horizontal
+   * sweeper at the calibrated duck-able height band (avoided by ducking). The
+   * object starts off-screen; its warning is telegraphed from this start state.
+   */
+  private makeObject(): Obj {
     const type = TYPES[weighted(TYPE_WEIGHTS)];
     const r = type.rMul * this.unit;
     const cr = type.crMul * this.unit;
@@ -296,26 +334,25 @@ class Dodge implements JukeGame {
       // Sweeper: pure horizontal, at a randomized height inside the duck-able band
       // (so its height is always one the calibrated player can crouch beneath).
       const fromLeft = Math.random() < 0.5;
-      this.objects.push({
+      return {
         ...base,
         x: fromLeft ? -m : 1 + m,
         y: rand(this.sweepTopY, this.sweepBotY),
         vx: (fromLeft ? 1 : -1) * speed,
         vy: 0,
-      });
-      return;
+      };
     }
 
     // Drop: falls from above within ~1–1.7 shoulder-widths of the player's center
     // (so it threatens the body but a sidestep clears it), with a gentle drift.
     const bandHalf = this.unit * lerp(1.0, 1.7, this.diff());
-    this.objects.push({
+    return {
       ...base,
       x: clamp(this.centerX + rand(-bandHalf, bandHalf), 0.04, 0.96),
       y: -m,
       vx: rand(-0.16, 0.16) * speed,
       vy: speed,
-    });
+    };
   }
 
   // --- contract surface ----------------------------------------------------
@@ -351,8 +388,71 @@ class Dodge implements JukeGame {
     }
 
     this.fireFx(ctx, rect); // hit/graze feedback queued by update()
+    for (const p of this.pending) this.drawTelegraph(ctx, p, rect); // warnings, under the objects
     for (const o of this.objects) this.drawObject(ctx, o, rect);
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+  }
+
+  /**
+   * Telegraph a queued object: a dashed lane along its incoming path plus a
+   * pulsing "lock" marker (a ring that contracts toward arrival + an arrow
+   * pointing the way it will travel) at the edge it enters from. Gives the player
+   * a readable beat to move before it's live. Mirrored to selfie space like the
+   * objects. The pulse is driven purely by warning progress, so no clock is needed.
+   */
+  private drawTelegraph(ctx: CanvasRenderingContext2D, p: Pending, rect: Rect): void {
+    const o = p.obj;
+    const prog = clamp(1 - p.timer / p.max, 0, 1); // 0 at warning start → 1 at arrival
+    const flash = 0.55 + 0.45 * Math.abs(Math.sin(prog * Math.PI * 3));
+    const a = (0.22 + 0.62 * prog) * flash;
+    const col = o.type.color;
+    const sx = (nx: number): number => rect.x + (1 - nx) * rect.w; // selfie mirror
+    const sy = (ny: number): number => rect.y + ny * rect.h;
+
+    // Dashed lane along the trajectory, clipped to the play area.
+    const mag = Math.hypot(o.vx, o.vy) || 1;
+    const ux = o.vx / mag;
+    const uy = o.vy / mag;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    ctx.clip();
+    ctx.strokeStyle = rgba(col, a * 0.32);
+    ctx.lineWidth = Math.max(2, o.r * rect.w * 0.5);
+    ctx.lineCap = 'round';
+    ctx.setLineDash([rect.w * 0.014, rect.w * 0.02]);
+    ctx.beginPath();
+    ctx.moveTo(sx(o.x - ux * 0.2), sy(o.y - uy * 0.2));
+    ctx.lineTo(sx(o.x + ux * 1.8), sy(o.y + uy * 1.8));
+    ctx.stroke();
+    ctx.restore();
+
+    // Edge marker: a contracting ring + an arrow pointing the way it will travel.
+    const s = Math.max(9, rect.w * 0.016) * (0.9 + 0.35 * prog);
+    const pad = s * 2;
+    const ex = clamp(sx(o.x), rect.x + pad, rect.x + rect.w - pad);
+    const ey = clamp(sy(o.y), rect.y + pad, rect.y + rect.h - pad);
+    const ang = Math.atan2(o.vy, -o.vx); // screen velocity (x mirrored)
+
+    ctx.save();
+    ctx.shadowColor = col;
+    ctx.shadowBlur = s;
+    ctx.strokeStyle = rgba(col, a);
+    ctx.lineWidth = Math.max(2, s * 0.16);
+    ctx.beginPath();
+    ctx.arc(ex, ey, s * (1.7 - 0.6 * prog), 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.translate(ex, ey);
+    ctx.rotate(ang);
+    ctx.fillStyle = rgba(col, a);
+    ctx.beginPath();
+    ctx.moveTo(s * 0.95, 0);
+    ctx.lineTo(-s * 0.5, s * 0.62);
+    ctx.lineTo(-s * 0.5, -s * 0.62);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   /** Fire queued hit/graze juice + SFX at the object's mirrored screen position. */
