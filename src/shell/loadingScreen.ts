@@ -15,7 +15,7 @@ const TIPS: string[] = [
   'Stand back <b>~6&nbsp;ft</b> so your whole body fits in frame.',
   'Face a window or light — even, front lighting reads best.',
   'A <b>plain background</b> helps the camera find your silhouette.',
-  'Your body is the controller. No mouse, no keyboard.',
+  'Going to the gym helps for dodge!',
   'Hand Simon-Says works <b>seated</b> — just show your hand.',
   'Everything runs on your machine. The video never leaves it.',
 ];
@@ -46,7 +46,7 @@ function build(): HTMLDivElement {
 
   const label = document.createElement('div');
   label.className = 'loader__label';
-  label.textContent = 'Warming up the camera AI…';
+  label.textContent = 'Waking up the game judge...';
 
   el.append(logo, bar, tip, label);
   document.body.appendChild(el);

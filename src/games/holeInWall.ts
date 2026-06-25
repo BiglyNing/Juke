@@ -39,9 +39,17 @@ const START_LIVES = 3; // misses allowed before the run ends (forgiving, not one
 // Extra approach time on early walls so a new player can read the pose; it fades
 // out as they pass walls, so the speed ramps *up* with skill, not down.
 const RAMP_BONUS_MS = 2200;
+// Each successful pass trims this much approach time, until the bonus is gone and
+// the wall arrives at the floor pace (debugParams.wallSecs).
+const RAMP_STEP_MS = 300;
 // Each wall shrinks the pose hole a touch, so the fit gets tighter over a run.
 const SHRINK_PER_WALL = 0.025; // ~2.5% smaller per wall
-const MIN_SHRINK = 0.75; // floor so the hole never shrinks below the body itself
+const MIN_SHRINK = 0.7; // floor so the hole never shrinks below a fittable level
+// Per-wall re-measure can only resize the hole within this band of the calibrated
+// size. A single noisy or turned-sideways frame projects the shoulders narrow,
+// which would otherwise collapse the hole to something you can't fit through.
+const MIN_RECAL = 0.85;
+const MAX_RECAL = 1.3;
 
 type Phase = 'waiting' | 'approach' | 'result' | 'dead';
 
@@ -205,7 +213,7 @@ class HoleInWall implements JukeGame {
    * player (low score) keeps the slower, readable pace instead of being rushed.
    */
   private wallMs(): number {
-    const bonus = Math.max(0, RAMP_BONUS_MS - this.scoreValue * 550);
+    const bonus = Math.max(0, RAMP_BONUS_MS - this.scoreValue * RAMP_STEP_MS);
     return debugParams.wallSecs * 1000 + bonus;
   }
 
@@ -233,24 +241,45 @@ class HoleInWall implements JukeGame {
   /**
    * Re-measure the player at the start of a wall so the hole matches their CURRENT
    * apparent size + height: step back and the next hole shrinks, step in and it
-   * grows. Limb reach and which limbs are used stay from the original calibration
-   * (just rescaled by the new size), so a transient mid-pose frame can't distort
-   * the hole or drop a leg. No-ops if the player isn't cleanly framed — we keep
-   * the previous profile rather than snapping to a bad read.
+   * grows. Crucially the hole keeps the *calibrated* shape and radii — only scaled
+   * by the (clamped) apparent size change and moved onto the player's current
+   * position. So a transient bad frame (mid-turn, noisy detection) that projects
+   * the shoulders narrow can nudge where the hole sits but can't collapse its size
+   * or proportions into something you can't fit through. No-ops if the player isn't
+   * cleanly framed — we keep the previous profile rather than snapping to a bad read.
    */
   private recalibrate(pose: Point[] | null): void {
     const base = this.baseProfile;
     if (!base || !pose || !canCalibrate(pose)) return;
     const live = buildProfile(pose);
     if (!live) return;
-    const k = live.unit / base.unit; // size change since calibration ≈ distance change
+    // Apparent size change since calibration ≈ distance change, clamped so one bad
+    // frame can't blow the hole up or shrink it below something fittable.
+    const k = Math.max(MIN_RECAL, Math.min(MAX_RECAL, live.unit / base.unit));
+    // Move the calibrated shape (scaled by k) onto where the player is now. We only
+    // trust the live frame for position; size + proportions come from calibration.
+    const center = (p: BodyProfile): Vec => ({
+      x: (p.shoulderL.x + p.shoulderR.x + p.hipL.x + p.hipR.x) / 4,
+      y: (p.shoulderL.y + p.shoulderR.y + p.hipL.y + p.hipR.y) / 4,
+    });
+    const lc = center(live);
+    const bc = center(base);
+    const t = (v: Vec): Vec => ({ x: lc.x + (v.x - bc.x) * k, y: lc.y + (v.y - bc.y) * k });
     this.profile = {
-      ...live,
+      ...base,
+      head: t(base.head),
+      neck: t(base.neck),
+      pelvis: t(base.pelvis),
+      shoulderL: t(base.shoulderL),
+      shoulderR: t(base.shoulderR),
+      hipL: t(base.hipL),
+      hipR: t(base.hipR),
+      unit: base.unit * k,
+      headR: base.headR * k,
+      torsoR: base.torsoR * k,
+      limbR: base.limbR * k,
       armLen: base.armLen * k,
       legLen: base.legLen * k,
-      hasArms: base.hasArms,
-      hasLegs: base.hasLegs,
-      hasFeet: base.hasFeet,
     };
   }
 
@@ -350,9 +379,11 @@ class HoleInWall implements JukeGame {
 
     this.fireFx(ctx); // pass/crush feedback, queued by update()
     this.drawWall(ctx, rect);
-    // No silhouette overlay during play — the live camera feed + pose skeleton
-    // show the player against the wall without the teal body fill on top.
-    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+    // No silhouette overlay during play — the live camera feed + a toned-down
+    // pose skeleton show the player against the wall without the teal body fill
+    // on top. Dimmed (vs full-strength in calibration) so it confirms tracking
+    // without competing with the wall you're trying to read.
+    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect, 0.5);
     // CRT scanline/roll filter over the whole game scene (under the HUD text).
     drawCrtScanlines(ctx, rect);
     this.drawFraming(ctx, frame);

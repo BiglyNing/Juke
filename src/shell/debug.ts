@@ -31,7 +31,7 @@ export const debugParams: DebugParams = {
   alpha: 0.5,
   erodePx: 1,
   tol: 0.08,
-  wallSecs: 4.5,
+  wallSecs: 3,
   windowStart: 0.86,
   stress: false,
   showGrid: true,

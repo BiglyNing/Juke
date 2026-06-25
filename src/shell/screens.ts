@@ -105,7 +105,7 @@ export function showMenu(cards: MenuCard[], onSelect: (id: string) => void): voi
 
   const head = el('div', 'menu__head');
   const mark = el('div', 'wordmark menu__mark', 'JUKE');
-  const tag = el('p', 'menu__tag', 'Pick a game — your body is the controller.');
+  const tag = el('p', 'menu__tag', 'Pick a game. Your body is the controller.');
   head.append(mark, tag);
 
   const grid = el('div', 'menu__grid');

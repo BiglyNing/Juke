@@ -35,9 +35,9 @@ type State = 'title' | 'menu' | 'calibrate' | 'countdown' | 'play' | 'gameover' 
 
 /** Per-game menu blurb (the contract stays minimal, so copy lives here). */
 const BLURBS: Record<string, string> = {
-  holeInWall: 'A wall with a person-shaped gap rushes you. Contort to fit — or get squashed.',
-  simonSays: 'Mimic the hand sign before the timer runs out. Seated and laptop-friendly — just show your hand.',
-  dodge: 'Neon objects rain down and sweep across at you. Step aside from the drops, duck under the sweepers.',
+  holeInWall: 'The wall is alive and out to get you. Contort to fit its shape, or get squashed!!',
+  simonSays: 'Mimic the shown hand sign before the timer runs out. Watch out for the tricky modifiers that appear whenever they feel like it.',
+  dodge: 'Dodge the neon-balls!!! Thats about it.',
 };
 
 const SEATED_HOLD_MS = 1000; // hold a hand in view this long to pass seated calibration
@@ -224,9 +224,9 @@ export class Shell {
       heading: ready ? 'HOLD STILL' : 'STEP BACK',
       hint: ready
         ? feet
-          ? 'Full body in frame — hold the pose.'
-          : 'Legs in frame — hold still. (Show your feet too for wider poses.)'
-        : 'Get your hands and legs in frame. Feet are optional. Plain background, face the light.',
+          ? 'Full body in frame. Hold the pose!'
+          : 'Legs in frame. Hold still! (Show your feet too for wider poses.)'
+        : 'Get your hands and legs in frame. Feet are optional.',
       checks: [
         { label: 'Left hand', ok: !!f?.wristL },
         { label: 'Right hand', ok: !!f?.wristR },

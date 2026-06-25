@@ -253,8 +253,8 @@ syncMuteButton();
 // (revealed once the menu is up) reopens them, so they're reachable any time —
 // not a one-shot a player who clicked straight through can never see again.
 const HOW_TO_STEPS = [
-  { title: 'Allow your camera. ', text: 'Everything runs on your machine — the video never leaves it.' },
-  { title: 'Stand back ~6 ft. ', text: 'Fit your whole body in frame and face a window or light.' },
+  { title: 'Allow your camera. ', text: 'Everything runs on your machine and video never leaves it.' },
+  { title: 'Stand back ~6 ft for standing games. ', text: 'Fit your whole body in frame and face a window or light.' },
   { title: 'Move to play. ', text: 'Fit the wall, dodge the neon, or mimic the sign. Hand Simon-Says works seated.' },
 ];
 
@@ -348,10 +348,10 @@ async function start(): Promise<void> {
 showOverlay({
   title: 'JUKE',
   brand: true,
-  body: 'A webcam motion arcade — your body is the controller. No download, no install.',
+  body: 'An interactive arcade using only your webcam. Your body is the controller.',
   steps: [
-    { title: 'Allow your camera. ', text: 'Everything runs on your machine — the video never leaves it.' },
-    { title: 'Stand back ~6 ft. ', text: 'Fit your whole body in frame and face a window or light.' },
+    { title: 'Allow your camera. ', text: 'Everything runs on your machine and video never leaves it.' },
+    { title: 'Stand back ~6 ft for standing games. ', text: 'Fit your whole body in frame and face a window or light.' },
     { title: 'Move to play. ', text: 'Fit the wall, dodge the neon, or mimic the sign. Hand Simon-Says works seated.' },
   ],
   action: { label: 'Enable camera & start', onClick: start },

@@ -34,7 +34,7 @@ Phases are checked off as their exit criteria are met. **P0–P11 are in** (prod
 | P4 — minimal Hole-in-the-Wall | ✅ done | Profile-fitted walls, `maskOverlap` judging, leniency dials |
 | P5 — game shell | ✅ done | CRT-vaporwave design system, menu, calibration, countdown, HUD, game-over, model-load screen |
 | P6 — Hand Simon-Says | ✅ done | Seated gesture game on the Gesture Recognizer |
-| P7 — juice layer | ✅ done | Particles/shake/time-warp services, procedural Web-Audio music+SFX, neon silhouette + trail, crack meter, WebM replay-clip capture |
+| P7 — juice layer | ✅ done | Particles/shake/time-warp services, procedural Web-Audio music+SFX, crack meter, WebM replay-clip capture |
 | P8 — share card & leaderboard | ✅ done | PNG neon-duotone share card (download + clipboard) from the freeze-frame; localStorage daily/all-time best surfaced on the menu + game-over. Daily seed left for later (optional). |
 | P9 — submission artifacts | ◐ code done | README front-door ready; **attract mode shipped** — a *procedural* glowing pose-figure (`shell/attractFigure.ts`) cycles wall poses behind the menu, so the first frame is never static and always reads as a person (the earlier raw-fixture attempt read as a blob and was removed). **Remaining (inherently manual):** record the demo GIF/video from the in-app "Save clip" WebM, and smoke-test the deployed link on a fresh machine. |
 | P10 — Dodge (3rd mode) | ✅ done | `games/dodge.ts`: neon **drops** rain down (step aside) and **sweepers** fly across (duck under) — **calibrated to the player**: objects sized to shoulder width, drops aimed at the live silhouette centroid, and sweepers confined to a head→duck-floor band derived from the player's calibrated height so they're always crouch-able. Circle-vs-silhouette collision via a new `circleOverlapRatio`; spawn/speed ramp; hit/graze/dodge juice. **Zero engine changes** — new file + registration + one menu blurb. |
@@ -234,7 +234,7 @@ See **Appendix — Architecture as built** for the realized layering and the "ad
   - **"Duck on death"**: music briefly dips/filters when you're crushed so the freeze-frame lands.
   - A **mute toggle** + respect autoplay rules (audio context must start on a user gesture — kick it off from the first menu click/play press).
   - Source free, license-clear assets (e.g. CC0 from freesound / opengameart) — keep files small.
-- Silhouette rendering upgrade (`render/silhouette.ts`): neon outline + soft fill + trailing afterimage on fast motion.
+- ~~Silhouette rendering upgrade: neon outline + soft fill + trailing afterimage on fast motion.~~ **Cut.** Overlaying the downsampled, eroded collision mask on top of the live camera read as a laggy blob and fought self-alignment, so the shipped player look is the faded camera feed + a glowing neon pose skeleton — no body fill. (See the render note in `games/holeInWall.ts`.)
 - Wire feedback into Hole-in-the-Wall: proximity heat (overlap pixels glow orange→red as the wall nears), clean-pass shockwave + brief slow-mo, **freeze-frame on crush**, near-miss screen shake.
 - Soft-fail crack meter (overlap drains health) replacing instant death where desired.
 - **Build the GIF/clip capture path here** (not at the end): a ring buffer of the last ~2 s of canvas frames you can dump to a GIF/WebM on game-over. You already need the freeze-frame, so the capture mechanism falls out of this work — and it's the raw material for the Phase 9 submission artifacts. Don't leave it as an end-of-project scramble.
@@ -242,7 +242,7 @@ See **Appendix — Architecture as built** for the realized layering and the "ad
 **Exit criteria:**
 - A clean pass and a crush both produce distinct, satisfying **audio + visual** feedback.
 - Background music plays from the menu through gameplay, and a mute toggle works.
-- The silhouette looks polished (glow + trail) on the menu and in-game.
+- The player reads clearly in-game: a faded live camera feed + a glowing neon pose skeleton (the neon body-fill silhouette was cut — see the P7 tasks above).
 - You can trigger a capture and get a short clip/GIF of the last couple of seconds out of the app.
 - Particle/effect counts are capped so weak laptops stay smooth (verify FPS via the overlay — it should never flash red).
 

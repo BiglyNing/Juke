@@ -68,19 +68,31 @@ export function drawSilhouetteMask(
   ctx.globalAlpha = 1;
 }
 
+/**
+ * Draw the 33-point pose skeleton into the mirrored selfie rect.
+ *
+ * `strength` (0..1) scales opacity + line/dot weight together: bold at 1 (the
+ * calibration default, where it's how the player confirms their limbs are
+ * tracked), and toned down in-game (~0.5) where it's confirmation the camera
+ * still sees you, not the thing you're looking at.
+ */
 export function drawPoseSkeleton(
   ctx: CanvasRenderingContext2D,
   pose: Point[],
   rect: Rect,
+  strength = 1,
 ): void {
   const px = (nx: number): number => rect.x + (1 - nx) * rect.w; // mirror x (selfie)
   const py = (ny: number): number => rect.y + ny * rect.h;
+  const weight = 0.6 + 0.4 * strength; // taper line/dot size, but never to nothing
 
-  ctx.lineWidth = Math.max(2, ctx.canvas.width / 320);
+  ctx.save();
+  ctx.globalAlpha = strength;
+  ctx.lineWidth = Math.max(1.5, (ctx.canvas.width / 320) * weight);
   ctx.strokeStyle = COLORS.teal;
   ctx.lineCap = 'round';
   ctx.shadowColor = rgba(COLORS.teal, 0.8);
-  ctx.shadowBlur = 8;
+  ctx.shadowBlur = 8 * strength;
   for (const { start, end } of PoseLandmarker.POSE_CONNECTIONS) {
     const a = pose[start];
     const b = pose[end];
@@ -92,7 +104,7 @@ export function drawPoseSkeleton(
   }
   ctx.shadowBlur = 0;
 
-  const r = Math.max(3, ctx.canvas.width / 280);
+  const r = Math.max(2, (ctx.canvas.width / 280) * weight);
   for (const lm of pose) {
     ctx.fillStyle =
       (lm.visibility ?? 0) >= VISIBILITY_THRESHOLD ? '#ffffff' : rgba(COLORS.magenta, 0.5);
@@ -100,6 +112,7 @@ export function drawPoseSkeleton(
     ctx.arc(px(lm.x), py(lm.y), r, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.restore();
 }
 
 /**

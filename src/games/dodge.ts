@@ -86,8 +86,8 @@ const STAND_GRACE_MS = 3000;
 // warning, and after a short grace they bleed a life every SIDE_DRAIN_MS until they
 // step back in — a fast punishment, not a slow one.
 const EDGE_BAND_FRAC = 0.025; // width of each side sample band, as a fraction of the grid
-const SIDE_OUT_DENSITY = 0.18; // edge-band fill (0..1) that counts as a body clipping the bound
-const SIDE_GRACE_MS = 700; // warning shown this long before the bleed starts
+const SIDE_OUT_DENSITY = 0.3; // edge-band fill (0..1) that counts as a body clipping the bound
+const SIDE_GRACE_MS = 1300; // warning shown this long before the bleed starts
 const SIDE_DRAIN_MS = 550; // lose a life this often while still out (quick)
 // Combo reward: bank this much "heal progress" to earn a life back (capped at
 // START_LIVES). Each clean dodge adds at least 1, and that gain grows by 1 every
@@ -565,7 +565,7 @@ class Dodge implements JukeGame {
     this.fireFx(ctx, rect); // hit/graze feedback queued by update()
     for (const p of this.pending) this.drawTelegraph(ctx, p, rect); // warnings, under the objects
     for (const o of this.objects) this.drawObject(ctx, o, rect);
-    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect, 0.5); // dimmed in-game; full in calibration
     if (this.phase === 'play') {
       this.drawStandZone(ctx, rect);
       this.drawSideWarning(ctx, rect);
