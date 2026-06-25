@@ -775,13 +775,13 @@ body {
 }
 
 /* =====================================================================
- * Mute toggle (Phase 7) — a small icon button, always reachable so a
- * reviewer can silence the tab instantly. Built on the design tokens.
+ * Corner icon buttons — the mute toggle (Phase 7) and the how-to-play
+ * help button (Phase 11). Always reachable so a reviewer can silence the
+ * tab or re-read the instructions any time. Built on the design tokens.
  * =================================================================== */
-.mute-btn {
+.icon-btn {
   position: fixed;
   top: 0.75rem;
-  right: 0.75rem;
   z-index: 70;
   width: 2.5rem;
   height: 2.5rem;
@@ -801,17 +801,29 @@ body {
     border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
-.mute-btn:hover {
+.icon-btn:hover {
   transform: translateY(-1px);
   border-color: rgba(46, 230, 200, 0.7);
+}
+.icon-btn:focus-visible {
+  outline: 2px solid var(--magenta);
+  outline-offset: 2px;
+}
+
+/* Mute sits top-right; help sits just to its left. */
+.mute-btn {
+  right: 0.75rem;
 }
 .mute-btn.is-muted {
   color: var(--muted);
   border-color: rgba(255, 79, 126, 0.5);
 }
-.mute-btn:focus-visible {
-  outline: 2px solid var(--magenta);
-  outline-offset: 2px;
+.help-btn {
+  right: 3.5rem;
+  display: none; /* shown once the menu is up (start screen already lists the steps) */
+}
+.help-btn.is-shown {
+  display: grid;
 }
 
 /* =====================================================================
@@ -877,4 +889,165 @@ body {
   border-top: 1px solid rgba(234, 230, 255, 0.1);
   color: var(--magenta);
   font-size: 0.72rem;
+}
+
+/* =====================================================================
+ * SVG icons (Phase 11) — replace the emoji that stood in for icons.
+ * `.icon` inherits the host's color via `currentColor` and sizes to 1em.
+ * =================================================================== */
+.icon {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+.icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Button label sits next to its icon and is updated in place by the setters. */
+.btn__label {
+  display: inline-block;
+}
+
+/* =====================================================================
+ * Branded start screen (Phase 11 first-run UX) — the JUKE wordmark, a
+ * numbered "how to play" with the framing tip, built on the overlay layer.
+ * =================================================================== */
+.overlay__brand {
+  font-size: var(--fs-6);
+  line-height: 1;
+}
+.overlay__steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: min(34rem, 100%);
+  margin: var(--sp-2) 0;
+  text-align: left;
+}
+.overlay__step {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+.overlay__step-n {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-1);
+  color: var(--base);
+  background: linear-gradient(135deg, var(--teal), var(--magenta));
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(46, 230, 200, 0.35);
+}
+.overlay__step div {
+  font-size: var(--fs-1);
+  line-height: 1.5;
+}
+.overlay__step b {
+  color: var(--text);
+  font-weight: 700;
+}
+.overlay__step span {
+  color: var(--muted);
+}
+.overlay__note {
+  margin-top: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+/* =====================================================================
+ * Bit — the mascot (Phase 11). Docked bottom-left; idle-bobs, hops on a
+ * point, shakes on a hit. Colour + glow track the mood. Click-through.
+ * =================================================================== */
+.mascot {
+  position: fixed;
+  left: clamp(0.75rem, 2vw, 1.5rem);
+  bottom: clamp(0.75rem, 2vw, 1.5rem);
+  width: clamp(3rem, 7vw, 4.5rem);
+  z-index: 46;
+  display: none;
+  pointer-events: none;
+  color: var(--teal);
+  filter: drop-shadow(0 0 10px rgba(46, 230, 200, 0.5));
+  transition:
+    color var(--dur-med) var(--ease-out),
+    filter var(--dur-med) var(--ease-out);
+}
+.mascot.show {
+  display: block;
+  animation: mascot-bob 2.8s var(--ease-in-out) infinite;
+}
+.mascot svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.mascot.mood-cheer {
+  color: var(--ok);
+  filter: drop-shadow(0 0 14px rgba(92, 240, 168, 0.6));
+}
+.mascot.mood-wince {
+  color: var(--danger);
+  filter: drop-shadow(0 0 14px rgba(255, 79, 126, 0.6));
+}
+.mascot.mood-cheer.react {
+  animation: mascot-hop 0.5s var(--ease-out);
+}
+.mascot.mood-wince.react {
+  animation: mascot-shake 0.45s var(--ease-out);
+}
+@keyframes mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes mascot-hop {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(-14px) scale(1.08);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes mascot-shake {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0);
+  }
+  20% {
+    transform: translateX(-5px) rotate(-4deg);
+  }
+  40% {
+    transform: translateX(5px) rotate(4deg);
+  }
+  60% {
+    transform: translateX(-4px) rotate(-3deg);
+  }
+  80% {
+    transform: translateX(3px) rotate(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot.show,
+  .mascot.mood-cheer.react,
+  .mascot.mood-wince.react {
+    animation: none;
+  }
 }

@@ -23,6 +23,8 @@ import { audio } from '../juice/audio';
 import { juice } from '../juice/juice';
 import { capture } from '../juice/capture';
 import { COLORS, rgba } from './theme';
+import { drawAttractFigure } from './attractFigure';
+import { mascot } from './mascot';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
 import { leaderboard } from './leaderboard';
@@ -109,6 +111,8 @@ export class Shell {
     audio.startMusic(); // looping menu track (idempotent; no-op until audio is unlocked)
     audio.setIntensity(0);
     this.engine.clearActiveGame();
+    mascot.show(); // Bit idle-bobs on the menu
+    mascot.idle();
     screens.showMenu(
       allGames()
         .filter((g) => g.id !== 'test')
@@ -164,6 +168,7 @@ export class Shell {
     this.seatedHoldMs = 0;
     this.result = null;
     this.state = 'calibrate';
+    mascot.hide(); // out of the way while the player frames up
     screens.showCalibrate(this.calibView(null));
   }
 
@@ -237,6 +242,7 @@ export class Shell {
 
   private toCountdown(): void {
     this.state = 'countdown';
+    mascot.hide(); // hidden through calibrate/countdown; back when play starts
     this.cdIndex = 0;
     this.cdTimer = COUNTDOWN[0].ms;
     screens.showCountdown();
@@ -269,6 +275,8 @@ export class Shell {
     this.hudScore = -1;
     screens.hideAll(); // clear the countdown ("GO") before the HUD goes up
     screens.showHud(game.title, typeof game.health === 'function');
+    mascot.show(); // Bit rides along the run, reacting to score/health
+    mascot.idle();
   }
 
   private tickPlay(): void {
@@ -314,6 +322,11 @@ export class Shell {
     });
     if (outcome?.isAllTimeBest) audio.sting(); // celebrate a new personal best
 
+    // Bit reacts to how the run ended: a grin for a new best, a wince otherwise.
+    mascot.show();
+    if (outcome?.isAllTimeBest) mascot.cheer();
+    else mascot.wince();
+
     this.engine.clearActiveGame();
 
     const hasClip = capture.hasClip();
@@ -342,7 +355,7 @@ export class Shell {
     const blob = await capture.exportWebM();
     if (blob) {
       capture.download(blob);
-      screens.setClipSaveLabel('Saved ✓');
+      screens.setClipSaveLabel('Saved');
     } else {
       screens.setClipSaveLabel('Not supported');
     }
@@ -359,7 +372,7 @@ export class Shell {
     }
     downloadCard(blob, `juke-${this.lastScore}.png`);
     const copied = await copyCard(blob);
-    screens.setShareSaveLabel(copied ? 'Saved ✓ · copied' : 'Saved ✓');
+    screens.setShareSaveLabel(copied ? 'Saved · copied' : 'Saved');
   }
 
   /** Blit the rendered share card into the game-over preview canvas. */
@@ -421,5 +434,12 @@ export class Shell {
     g.addColorStop(1, rgba(COLORS.bg, 0));
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
+
+    // Attract figure: a faint glowing person cycling wall poses behind the
+    // title/menu, so the first frame is never static (Phase 9). Skipped on
+    // game-over — there the result card / replay clip is the focus.
+    if (this.state !== 'gameover') {
+      drawAttractFigure(ctx, now, w, h, 0.22 + pulse * 0.05);
+    }
   }
 }

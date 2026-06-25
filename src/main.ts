@@ -11,6 +11,7 @@ import { FixtureRecorder, downloadFixture, type Fixture } from './engine/fixture
 import { showOverlay, hideOverlay } from './shell/overlay';
 import { showLoadingScreen, hideLoadingScreen } from './shell/loadingScreen';
 import { COLORS, FONT, rgba } from './shell/theme';
+import { ICONS } from './shell/icons';
 import {
   debugParams,
   isDebugOn,
@@ -232,7 +233,7 @@ window.addEventListener('keydown', (e) => {
 
 // --- Mute toggle (Phase 7): always-reachable so a reviewer can silence the tab.
 const muteBtn = document.createElement('button');
-muteBtn.className = 'mute-btn';
+muteBtn.className = 'icon-btn mute-btn';
 muteBtn.type = 'button';
 muteBtn.setAttribute('aria-label', 'Toggle sound');
 muteBtn.title = 'Toggle sound (M)';
@@ -245,10 +246,41 @@ document.body.appendChild(muteBtn);
 
 function syncMuteButton(): void {
   const muted = audio.isMuted();
-  muteBtn.textContent = muted ? '🔇' : '🔊';
+  muteBtn.innerHTML = muted ? ICONS.soundOff : ICONS.soundOn;
   muteBtn.classList.toggle('is-muted', muted);
 }
 syncMuteButton();
+
+// --- How to play -----------------------------------------------------------
+// The branded start screen below shows these steps on first load; a help button
+// (revealed once the menu is up) reopens them, so they're reachable any time —
+// not a one-shot a player who clicked straight through can never see again.
+const HOW_TO_STEPS = [
+  { title: 'Allow your camera. ', text: 'Everything runs on your machine — the video never leaves it.' },
+  { title: 'Stand back ~6 ft. ', text: 'Fit your whole body in frame and face a window or light.' },
+  { title: 'Move to play. ', text: 'Fit the wall, dodge the neon, or mimic the sign. Hand Simon-Says works seated.' },
+];
+
+function showHowToPlay(): void {
+  showOverlay({
+    title: 'HOW TO PLAY',
+    brand: true,
+    steps: HOW_TO_STEPS,
+    action: { label: 'Got it', onClick: hideOverlay },
+    note: 'D · debug overlay   M · mute',
+  });
+}
+
+// Help button (hidden until the menu is up — on the start screen the how-to-play
+// is already on screen). Always reachable from the menu / a run after that.
+const helpBtn = document.createElement('button');
+helpBtn.className = 'icon-btn help-btn';
+helpBtn.type = 'button';
+helpBtn.setAttribute('aria-label', 'How to play');
+helpBtn.title = 'How to play';
+helpBtn.innerHTML = ICONS.help;
+helpBtn.addEventListener('click', showHowToPlay);
+document.body.appendChild(helpBtn);
 
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
@@ -312,10 +344,18 @@ async function start(): Promise<void> {
   hideOverlay();
   shell.attachProducer(liveProducer);
   await shell.enterMenu(); // the shell takes over: menu → calibrate → countdown → play
+  helpBtn.classList.add('is-shown'); // how-to-play is reachable from here on
 }
 
 showOverlay({
-  title: 'Juke',
-  body: 'A webcam motion arcade — your body is the controller. Enable your camera, pick a game from the menu, get framed, and play. Press D for the debug overlay.',
+  title: 'JUKE',
+  brand: true,
+  body: 'A webcam motion arcade — your body is the controller. No download, no install.',
+  steps: [
+    { title: 'Allow your camera. ', text: 'Everything runs on your machine — the video never leaves it.' },
+    { title: 'Stand back ~6 ft. ', text: 'Fit your whole body in frame and face a window or light.' },
+    { title: 'Move to play. ', text: 'Fit the wall, dodge the neon, or mimic the sign. Hand Simon-Says works seated.' },
+  ],
   action: { label: 'Enable camera & start', onClick: start },
+  note: 'D · debug overlay   M · mute',
 });

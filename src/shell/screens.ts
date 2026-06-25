@@ -10,6 +10,9 @@
  * builds/toggles the DOM and exposes a few `update…` setters for per-frame data.
  */
 
+import { ICONS, iconSpan } from './icons';
+import { mascot } from './mascot';
+
 export interface MenuCard {
   id: string;
   title: string;
@@ -64,6 +67,11 @@ let gameoverEl: HTMLDivElement | null = null;
 let gameoverPreviewEl: HTMLCanvasElement | null = null;
 let gameoverClipSaveEl: HTMLButtonElement | null = null;
 let gameoverShareSaveEl: HTMLButtonElement | null = null;
+
+// Previous HUD values, so the mascot reacts only to real changes (score up /
+// health drop) rather than every per-frame setter call.
+let prevHudScore = 0;
+let prevHudHealth = 1;
 
 function root(): HTMLDivElement {
   if (!rootEl) {
@@ -203,6 +211,8 @@ export function showHud(title: string, hasHealth = false): void {
   if (hudTitleEl) hudTitleEl.textContent = title;
   if (hudScoreEl) hudScoreEl.textContent = '0';
   if (hudHealthEl) hudHealthEl.style.display = hasHealth ? 'block' : 'none';
+  prevHudScore = 0;
+  prevHudHealth = 1;
   setHudHealth(1);
   hudEl.classList.add('show');
 }
@@ -213,6 +223,8 @@ export function setHudScore(score: number): void {
   hudScoreEl.classList.remove('pop');
   void hudScoreEl.offsetWidth;
   hudScoreEl.classList.add('pop');
+  if (score > prevHudScore) mascot.cheer(); // a point gained — Bit grins
+  prevHudScore = score;
 }
 
 /** Drain/fill the HUD crack meter (0..1). Goes red as it nears empty. */
@@ -221,6 +233,8 @@ export function setHudHealth(health: number): void {
   const h = Math.max(0, Math.min(1, health));
   hudHealthFillEl.style.width = `${Math.round(h * 100)}%`;
   hudHealthFillEl.classList.toggle('is-low', h <= 0.34);
+  if (h < prevHudHealth - 0.001) mascot.wince(); // took a hit — Bit winces
+  prevHudHealth = h;
 }
 
 function hideHud(): void {
@@ -248,11 +262,12 @@ export function showGameOver(view: GameOverView): void {
     el('div', 'gameover__score', String(view.score)),
   );
   if (view.best) {
-    const best = el(
-      'div',
-      `gameover__best${view.best.isRecord ? ' is-record' : ''}`,
-      view.best.isRecord ? `★ NEW BEST ${view.best.value}` : `BEST ${view.best.value}`,
-    );
+    const best = el('div', `gameover__best${view.best.isRecord ? ' is-record' : ''}`);
+    if (view.best.isRecord) {
+      best.append(iconSpan('star'), document.createTextNode(` NEW BEST ${view.best.value}`));
+    } else {
+      best.textContent = `BEST ${view.best.value}`;
+    }
     scoreWrap.appendChild(best);
   }
 
@@ -267,15 +282,11 @@ export function showGameOver(view: GameOverView): void {
 
   const exports = el('div', 'gameover__exports');
   if (view.share) {
-    gameoverShareSaveEl = el('button', 'btn btn--ghost', 'Save image ⬇');
-    gameoverShareSaveEl.type = 'button';
-    gameoverShareSaveEl.addEventListener('click', view.share.onSave);
+    gameoverShareSaveEl = exportButton('Save image', view.share.onSave);
     exports.appendChild(gameoverShareSaveEl);
   }
   if (view.clip) {
-    gameoverClipSaveEl = el('button', 'btn btn--ghost', 'Save clip ⬇');
-    gameoverClipSaveEl.type = 'button';
-    gameoverClipSaveEl.addEventListener('click', view.clip.onSave);
+    gameoverClipSaveEl = exportButton('Save clip', view.clip.onSave);
     exports.appendChild(gameoverClipSaveEl);
   }
   if (exports.childElementCount) previewRow.appendChild(exports);
@@ -301,14 +312,32 @@ export function gameOverPreviewCanvas(): HTMLCanvasElement | null {
   return gameoverPreviewEl;
 }
 
+/** An export button: a download icon + a label span the setters can update in place. */
+function exportButton(label: string, onClick: () => void): HTMLButtonElement {
+  const btn = el('button', 'btn btn--ghost');
+  btn.type = 'button';
+  btn.append(iconSpan('download'), el('span', 'btn__label', label));
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+/** Update an export button's label, swapping its icon to a check once it reads "Saved". */
+function setBtnLabel(btn: HTMLButtonElement | null, text: string): void {
+  if (!btn) return;
+  const label = btn.querySelector('.btn__label');
+  if (label) label.textContent = text;
+  const icon = btn.querySelector('.icon-wrap');
+  if (icon) icon.innerHTML = /^Saved/.test(text) ? ICONS.check : ICONS.download;
+}
+
 /** Update the "Save clip" button label (e.g. while exporting). */
 export function setClipSaveLabel(text: string): void {
-  if (gameoverClipSaveEl) gameoverClipSaveEl.textContent = text;
+  setBtnLabel(gameoverClipSaveEl, text);
 }
 
 /** Update the "Save image" (share card) button label. */
 export function setShareSaveLabel(text: string): void {
-  if (gameoverShareSaveEl) gameoverShareSaveEl.textContent = text;
+  setBtnLabel(gameoverShareSaveEl, text);
 }
 
 // --- shared ----------------------------------------------------------------
