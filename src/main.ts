@@ -323,6 +323,7 @@ async function start(): Promise<void> {
     return;
   }
 
+  hideOverlay(); // hand off from the camera overlay to the single loading screen
   showLoadingScreen();
   try {
     const pose = await createPosePerception();

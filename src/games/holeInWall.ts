@@ -22,8 +22,8 @@
 import { register, type JukeGame, type Need, type Intensity, type CalibrationResult } from '../engine/game';
 import { type PerceptionFrame, maskGrid } from '../engine/frame';
 import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
-import { limbsFramed } from '../engine/pose';
-import { type BodyProfile } from '../engine/calibration';
+import { limbsFramed, type Point } from '../engine/pose';
+import { buildProfile, canCalibrate, type BodyProfile, type Vec } from '../engine/calibration';
 import { holeFromProfile, pickVariation, rasterizeSolid, type Hole, type Variation } from './wall';
 import { perceptionRect, drawCameraFeed, drawPoseSkeleton } from '../render/perception';
 import type { Rect } from '../render/canvas';
@@ -53,7 +53,14 @@ class HoleInWall implements JukeGame {
   readonly intensity: Intensity = 'standing';
 
   private phase: Phase = 'waiting';
+  /** The per-wall profile: re-measured each wall so the hole tracks the player's size. */
   private profile: BodyProfile | null = null;
+  /** The shell's one-time calibration — the proportions baseline we rescale from. */
+  private baseProfile: BodyProfile | null = null;
+  /** Most recent pose, used to re-measure the player at the start of each new wall. */
+  private lastPose: Point[] | null = null;
+  /** Horizontal lane (normalized, raw camera space) the current hole is centered on. */
+  private laneCenter = 0.5;
 
   private variation: Variation | null = null;
   private hole: Hole | null = null;
@@ -81,6 +88,9 @@ class HoleInWall implements JukeGame {
   reset(): void {
     this.phase = 'waiting';
     this.profile = null;
+    this.baseProfile = null;
+    this.lastPose = null;
+    this.laneCenter = 0.5;
     this.hole = null;
     this.variation = null;
     this.z = 0;
@@ -96,13 +106,20 @@ class HoleInWall implements JukeGame {
 
   /** Receive the shell's calibration profile and start the first wall. */
   configure(result: CalibrationResult): void {
+    this.baseProfile = result.profile;
     this.profile = result.profile;
-    if (this.profile) this.startWall(null);
-    else this.phase = 'dead'; // a standing game can't run without a body profile
+    if (this.profile) {
+      // The first wall sits where the player calibrated (no forced sidestep yet).
+      this.laneCenter = (this.profile.shoulderL.x + this.profile.shoulderR.x) / 2;
+      this.startWall(null, false);
+    } else this.phase = 'dead'; // a standing game can't run without a body profile
   }
 
   update(frame: PerceptionFrame, dt: number): void {
     if (this.phase === 'waiting' || this.phase === 'dead') return;
+
+    // Remember the latest pose so the next wall can re-measure the player from it.
+    if (frame.pose) this.lastPose = frame.pose;
 
     if (this.phase === 'result') {
       this.resultTimer -= dt;
@@ -111,7 +128,7 @@ class HoleInWall implements JukeGame {
         // A miss costs a life but spawns the next wall; you're only out of the
         // run once the lives are gone — so one fumbled pose isn't game over.
         if (this.lives <= 0) this.phase = 'dead';
-        else this.startWall(this.variation);
+        else this.startWall(this.variation, true);
       }
       return;
     }
@@ -186,17 +203,75 @@ class HoleInWall implements JukeGame {
     return debugParams.wallSecs * 1000 + bonus;
   }
 
-  /** Generate the next wall from the calibrated profile, avoiding a repeat pose. */
-  private startWall(avoid: Variation | null): void {
+  /**
+   * Generate the next wall: re-measure the player (so the hole tracks their
+   * current distance), pick a non-repeating pose, and place the hole at a fresh
+   * horizontal lane (`relane`) so they have to sidestep into it.
+   */
+  private startWall(avoid: Variation | null, relane: boolean): void {
+    this.recalibrate(this.lastPose);
     const p = this.profile;
     if (!p) return;
     this.variation = pickVariation(p, Math.random, avoid ?? undefined);
-    this.hole = holeFromProfile(p, this.variation);
+    this.laneCenter = relane ? this.pickLane() : (p.shoulderL.x + p.shoulderR.x) / 2;
+    this.hole = holeFromProfile(this.placeAtLane(p, this.laneCenter), this.variation);
     this.z = 0;
     this.minRatio = Infinity;
     this.liveRatio = 1;
     this.judged = false;
     this.phase = 'approach';
+  }
+
+  /**
+   * Re-measure the player at the start of a wall so the hole matches their CURRENT
+   * apparent size + height: step back and the next hole shrinks, step in and it
+   * grows. Limb reach and which limbs are used stay from the original calibration
+   * (just rescaled by the new size), so a transient mid-pose frame can't distort
+   * the hole or drop a leg. No-ops if the player isn't cleanly framed — we keep
+   * the previous profile rather than snapping to a bad read.
+   */
+  private recalibrate(pose: Point[] | null): void {
+    const base = this.baseProfile;
+    if (!base || !pose || !canCalibrate(pose)) return;
+    const live = buildProfile(pose);
+    if (!live) return;
+    const k = live.unit / base.unit; // size change since calibration ≈ distance change
+    this.profile = {
+      ...live,
+      armLen: base.armLen * k,
+      legLen: base.legLen * k,
+      hasArms: base.hasArms,
+      hasLegs: base.hasLegs,
+      hasFeet: base.hasFeet,
+    };
+  }
+
+  /** A copy of `p` translated horizontally so its body center sits at lane `cx`. */
+  private placeAtLane(p: BodyProfile, cx: number): BodyProfile {
+    const dx = cx - (p.shoulderL.x + p.shoulderR.x) / 2;
+    const sx = (v: Vec): Vec => ({ x: v.x + dx, y: v.y });
+    return {
+      ...p,
+      head: sx(p.head),
+      neck: sx(p.neck),
+      pelvis: sx(p.pelvis),
+      shoulderL: sx(p.shoulderL),
+      shoulderR: sx(p.shoulderR),
+      hipL: sx(p.hipL),
+      hipR: sx(p.hipR),
+    };
+  }
+
+  /** A fresh lane (normalized) for the next wall, far enough from the current one to force a sidestep. */
+  private pickLane(): number {
+    const lo = 0.35;
+    const hi = 0.65;
+    const minStep = 0.16;
+    let lane = lo + Math.random() * (hi - lo);
+    for (let i = 0; i < 16 && Math.abs(lane - this.laneCenter) < minStep; i++) {
+      lane = lo + Math.random() * (hi - lo);
+    }
+    return lane;
   }
 
   /** Overlap ratio of the eroded player silhouette against the wall's solid region. */
