@@ -6,9 +6,18 @@
  * (shrinking) window to make it. Match → score + streak + faster tempo; let the
  * timer run out → lose a life; out of lives → the shell's GAME OVER.
  *
- * Easy tier: targets are MediaPipe's built-in gesture labels, matched directly
- * against `frame.gestures` (the Gesture Recognizer's top label). No landmark
- * grading yet — the rich tier (arbitrary poses) is deferred to Phase 11.
+ * Signs come in two flavors:
+ *  - built-in: matched against MediaPipe's Gesture Recognizer label (`label`).
+ *  - landmark: matched by a finger-state predicate (`match`) — the "rich tier"
+ *    (Phase 11), which is how we get poses the recognizer has no label for
+ *    (Shaka, Horns, OK, Pinch).
+ *
+ * Gimmick — the game finally lives up to its name. Most of the time it's a
+ * straight "make this sign" run, but it periodically drops into a *block* that
+ * lasts ~10 signs, announced by a warning banner:
+ *  - SIMON SAYS block: only obey when the prompt reads "SIMON SAYS". If it
+ *    doesn't, you must HOLD STILL — make the sign anyway and you lose a life.
+ *  - MIRROR block: make the OPPOSITE of the sign shown (✋↔✊, 👍↔👎, ✌️↔🤘).
  *
  * Lifecycle: written to the Phase 5 shell contract just like Hole-in-the-Wall —
  *   waiting → play → dead. The shell runs the seated calibration ("show your
@@ -17,27 +26,65 @@
 
 import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
 import type { PerceptionFrame } from '../engine/frame';
+import { fingerStates, type FingerStates, type Point } from '../engine/pose';
 import { perceptionRect, drawCameraFeed, drawHandSkeleton } from '../render/perception';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
 import { COLORS, FONT, rgba } from '../shell/theme';
 
 interface Sign {
-  /** MediaPipe Gesture Recognizer label. */
-  label: string;
+  /** Stable key (also used to wire up mirror opposites). */
+  id: string;
+  /** MediaPipe Gesture Recognizer label, for recognizer-graded signs. */
+  label?: string;
+  /** Landmark predicate, for signs the recognizer has no label for. */
+  match?: (f: FingerStates, hand: Point[]) => boolean;
   name: string;
   emoji: string;
+  /** id of the sign that is this one's mirror opposite (enables MIRROR rounds). */
+  opposite?: string;
+}
+
+/** Thumb-tip and index-tip pinched together, relative to palm size. */
+function pinching(hand: Point[]): boolean {
+  const palm = Math.hypot(hand[0].x - hand[9].x, hand[0].y - hand[9].y) || 1;
+  const tipGap = Math.hypot(hand[4].x - hand[8].x, hand[4].y - hand[8].y);
+  return tipGap < palm * 0.45;
 }
 
 const SIGNS: Sign[] = [
-  { label: 'Open_Palm', name: 'Open Palm', emoji: '✋' },
-  { label: 'Closed_Fist', name: 'Fist', emoji: '✊' },
-  { label: 'Victory', name: 'Peace', emoji: '✌️' },
-  { label: 'Thumb_Up', name: 'Thumbs Up', emoji: '👍' },
-  { label: 'Thumb_Down', name: 'Thumbs Down', emoji: '👎' },
-  { label: 'Pointing_Up', name: 'Point Up', emoji: '☝️' },
-  { label: 'ILoveYou', name: 'Rock On', emoji: '🤟' },
+  // Built-in recognizer labels.
+  { id: 'open', label: 'Open_Palm', name: 'Open Palm', emoji: '✋', opposite: 'fist' },
+  { id: 'fist', label: 'Closed_Fist', name: 'Fist', emoji: '✊', opposite: 'open' },
+  { id: 'peace', label: 'Victory', name: 'Peace', emoji: '✌️' },
+  { id: 'thumbUp', label: 'Thumb_Up', name: 'Thumbs Up', emoji: '👍', opposite: 'thumbDown' },
+  { id: 'thumbDown', label: 'Thumb_Down', name: 'Thumbs Down', emoji: '👎', opposite: 'thumbUp' },
+  { id: 'point', label: 'Pointing_Up', name: 'Point Up', emoji: '☝️' },
+  { id: 'loveyou', label: 'ILoveYou', name: 'Rock On', emoji: '🤟' },
+  // Landmark-graded poses (new motions — no recognizer label).
+  {
+    id: 'shaka',
+    name: 'Shaka',
+    emoji: '🤙',
+    match: (f) => f.thumb && f.pinky && !f.index && !f.middle && !f.ring,
+  },
+  {
+    id: 'ok',
+    name: 'OK',
+    emoji: '👌',
+    match: (f, h) => pinching(h) && f.middle && f.ring && f.pinky,
+  },
+  {
+    id: 'pinch',
+    name: 'Pinch',
+    emoji: '🤏',
+    match: (f, h) => pinching(h) && !f.middle && !f.ring && !f.pinky,
+  },
 ];
+
+const SIGN_BY_ID = new Map(SIGNS.map((s) => [s.id, s]));
+/** Signs that have a defined opposite — the pool MIRROR rounds draw from. */
+const MIRROR_SIGNS = SIGNS.filter((s) => s.opposite);
 
 const START_LIVES = 3;
 const BASE_ROUND_MS = 3500;
@@ -46,7 +93,18 @@ const RAMP_MS = 130; // shaved off the round timer per point of streak
 const MATCH_SCORE = 0.5; // recognizer confidence required to count
 const FEEDBACK_MS = 480;
 
+// Gimmick pacing.
+const BLOCK_LEN = 10; // signs in a SIMON/MIRROR block
+const NORMAL_MIN = 5; // straight signs between blocks (inclusive range)
+const NORMAL_MAX = 9;
+const WARN_MS = 1700; // warning-banner lead-in before a block begins
+const SIMON_TRAP_PROB = 0.42; // chance a SIMON round is a "didn't say" trap
+
 type Phase = 'waiting' | 'play' | 'dead';
+/** 'both' is the compounding block: a MIRROR round gated by SIMON SAYS. */
+type Mode = 'normal' | 'simon' | 'mirror' | 'both';
+
+const randInt = (lo: number, hi: number): number => lo + Math.floor(Math.random() * (hi - lo + 1));
 
 class SimonSays implements JukeGame {
   readonly id = 'simonSays';
@@ -55,11 +113,26 @@ class SimonSays implements JukeGame {
   readonly intensity: Intensity = 'seated';
 
   private phase: Phase = 'waiting';
-  private target: Sign = SIGNS[0];
+  /** What the prompt displays (the stimulus). */
+  private shown: Sign = SIGNS[0];
+  /** What the player must actually perform — differs from `shown` in MIRROR. */
+  private required: Sign = SIGNS[0];
+  /** Whether the player should act at all (false = SIMON trap: hold still). */
+  private obey = true;
+
   private timeLeft = 0;
   private roundTime = BASE_ROUND_MS;
-  /** A round only counts once the player isn't already holding the target sign. */
+  /** A round only counts once the player isn't already holding the required sign. */
   private armed = false;
+
+  // Gimmick state.
+  private mode: Mode = 'normal';
+  /** Rounds left in the current mode (until a block ends / a block is triggered). */
+  private roundsLeftInMode = NORMAL_MAX;
+  /** Active warning banner before a block begins; gameplay is paused while set. */
+  private warning: { mode: Mode; ms: number } | null = null;
+  private pendingWarnSfx = false;
+
   private scoreValue = 0;
   private streak = 0;
   private maxStreak = 0;
@@ -81,6 +154,9 @@ class SimonSays implements JukeGame {
     this.feedback = null;
     this.armed = false;
     this.pendingFx = null;
+    this.mode = 'normal';
+    this.warning = null;
+    this.pendingWarnSfx = false;
   }
 
   /** The shell's "begin the run" signal (after seated calibration + countdown). */
@@ -91,12 +167,16 @@ class SimonSays implements JukeGame {
     this.lives = START_LIVES;
     this.feedback = null;
     this.pendingFx = null;
+    this.mode = 'normal';
+    this.warning = null;
+    this.pendingWarnSfx = false;
+    this.roundsLeftInMode = randInt(NORMAL_MIN, NORMAL_MAX);
     // First target avoids Open Palm, since seated calibration just had the player
-    // show an open hand — otherwise round 1 could auto-complete.
-    this.target = this.pickSign('Open_Palm');
+    // show an open hand — otherwise round 1 could auto-complete. Seeding `shown`
+    // lets beginRound()'s avoid-repeat logic do the work.
+    this.shown = SIGN_BY_ID.get('open')!;
     this.roundTime = BASE_ROUND_MS;
-    this.timeLeft = BASE_ROUND_MS;
-    this.armed = false;
+    this.beginRound();
     this.phase = 'play';
   }
 
@@ -108,33 +188,114 @@ class SimonSays implements JukeGame {
       if (this.feedback.ms <= 0) this.feedback = null;
     }
 
-    const g = frame.gestures && frame.gestures.length > 0 ? frame.gestures[0] : null;
-    const cur = g?.name ?? 'None';
-    if (!this.armed && (cur === 'None' || cur !== this.target.label)) this.armed = true;
-
-    if (this.armed && g !== null && g.name === this.target.label && g.score >= MATCH_SCORE) {
-      this.scoreValue++;
-      this.streak++;
-      this.maxStreak = Math.max(this.maxStreak, this.streak);
-      this.feedback = { kind: 'hit', ms: FEEDBACK_MS };
-      this.pendingFx = 'hit';
-      this.nextRound();
+    // Warning banner: gameplay is paused while it counts down, then the block begins.
+    if (this.warning) {
+      this.warning.ms -= dt;
+      if (this.warning.ms <= 0) {
+        this.mode = this.warning.mode;
+        this.roundsLeftInMode = BLOCK_LEN;
+        this.warning = null;
+        this.beginRound();
+      }
       return;
     }
 
-    this.timeLeft -= dt;
-    if (this.timeLeft <= 0) {
-      this.lives--;
-      this.streak = 0;
-      this.feedback = { kind: 'miss', ms: FEEDBACK_MS };
-      if (this.lives <= 0) {
-        this.phase = 'dead';
-        this.pendingFx = 'dead';
-      } else {
-        this.pendingFx = 'miss';
-        this.nextRound();
+    const matched = this.detected(this.required, frame);
+    // Arm once the player is clearly NOT holding the required sign — so a sign
+    // carried over from the previous round can't auto-resolve this one.
+    if (!this.armed && !matched) this.armed = true;
+
+    if (this.obey) {
+      if (this.armed && matched) {
+        this.onSuccess();
+        return;
       }
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) this.onFail();
+    } else {
+      // SIMON trap: making the sign is the mistake; surviving the timer is the win.
+      if (this.armed && matched) {
+        this.onFail();
+        return;
+      }
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) this.onSuccess();
     }
+  }
+
+  /** True iff the live frame satisfies `sign` (recognizer label or landmark predicate). */
+  private detected(sign: Sign, frame: PerceptionFrame): boolean {
+    if (sign.label) {
+      const g = frame.gestures && frame.gestures.length > 0 ? frame.gestures[0] : null;
+      return g !== null && g.name === sign.label && g.score >= MATCH_SCORE;
+    }
+    const hand = frame.hands && frame.hands.length > 0 ? frame.hands[0] : null;
+    return hand !== null && !!sign.match && sign.match(fingerStates(hand), hand);
+  }
+
+  private onSuccess(): void {
+    this.scoreValue++;
+    this.streak++;
+    this.maxStreak = Math.max(this.maxStreak, this.streak);
+    this.feedback = { kind: 'hit', ms: FEEDBACK_MS };
+    this.pendingFx = 'hit';
+    this.advance();
+  }
+
+  private onFail(): void {
+    this.lives--;
+    this.streak = 0;
+    this.feedback = { kind: 'miss', ms: FEEDBACK_MS };
+    if (this.lives <= 0) {
+      this.phase = 'dead';
+      this.pendingFx = 'dead';
+      return;
+    }
+    this.pendingFx = 'miss';
+    this.advance();
+  }
+
+  /** Decide what comes next: another round, a block end, or a warning lead-in. */
+  private advance(): void {
+    this.roundsLeftInMode--;
+    if (this.roundsLeftInMode > 0) {
+      this.beginRound();
+      return;
+    }
+    if (this.mode === 'normal') {
+      // Drop into a special block, announced by a warning banner. The compounding
+      // 'both' block is rarer (~20%) since it stacks the two challenges.
+      const r = Math.random();
+      const next: Mode = r < 0.4 ? 'simon' : r < 0.8 ? 'mirror' : 'both';
+      this.warning = { mode: next, ms: WARN_MS };
+      this.pendingWarnSfx = true;
+    } else {
+      // Block finished — back to a stretch of straight rounds.
+      this.mode = 'normal';
+      this.roundsLeftInMode = randInt(NORMAL_MIN, NORMAL_MAX);
+      this.beginRound();
+    }
+  }
+
+  /** Pick the next round's stimulus + requirement + obey flag for the current mode. */
+  private beginRound(): void {
+    const prev = this.shown.id;
+    const mirror = this.mode === 'mirror' || this.mode === 'both';
+    const simon = this.mode === 'simon' || this.mode === 'both';
+    this.shown = this.pickSign(mirror ? MIRROR_SIGNS : SIGNS, prev);
+    this.required = mirror ? SIGN_BY_ID.get(this.shown.opposite!)! : this.shown;
+    this.obey = simon ? Math.random() >= SIMON_TRAP_PROB : true;
+    this.roundTime = Math.max(MIN_ROUND_MS, BASE_ROUND_MS - this.streak * RAMP_MS);
+    this.timeLeft = this.roundTime;
+    this.armed = false;
+  }
+
+  private pickSign(pool: Sign[], avoidId?: string): Sign {
+    let s = pool[Math.floor(Math.random() * pool.length)];
+    for (let i = 0; avoidId && s.id === avoidId && i < 12; i++) {
+      s = pool[Math.floor(Math.random() * pool.length)];
+    }
+    return s;
   }
 
   /** Fire hit/miss juice + SFX. Called from render() with canvas coords. */
@@ -163,21 +324,6 @@ class SimonSays implements JukeGame {
     }
   }
 
-  private nextRound(): void {
-    this.target = this.pickSign(this.target.label);
-    this.roundTime = Math.max(MIN_ROUND_MS, BASE_ROUND_MS - this.streak * RAMP_MS);
-    this.timeLeft = this.roundTime;
-    this.armed = false;
-  }
-
-  private pickSign(avoid?: string): Sign {
-    let s = SIGNS[Math.floor(Math.random() * SIGNS.length)];
-    for (let i = 0; avoid && s.label === avoid && i < 12; i++) {
-      s = SIGNS[Math.floor(Math.random() * SIGNS.length)];
-    }
-    return s;
-  }
-
   score(): number {
     return this.scoreValue;
   }
@@ -203,11 +349,17 @@ class SimonSays implements JukeGame {
     const playing = this.phase === 'play';
     if (frame.video) drawCameraFeed(ctx, frame.video, rect, playing ? 0.55 : 0.8);
 
-    const g = frame.gestures && frame.gestures.length > 0 ? frame.gestures[0] : null;
-    const matching = playing && this.armed && g?.name === this.target.label && g.score >= MATCH_SCORE;
+    const matched = playing && !this.warning && this.detected(this.required, frame);
     const hand = frame.hands && frame.hands.length > 0 ? frame.hands[0] : null;
     if (hand) {
-      drawHandSkeleton(ctx, hand, rect, matching ? COLORS.ok : COLORS.teal);
+      // Green when a "do it" requirement is satisfied; red when you're tripping a trap.
+      const color = matched ? (this.obey ? COLORS.ok : COLORS.danger) : COLORS.teal;
+      drawHandSkeleton(ctx, hand, rect, color);
+    }
+
+    if (this.pendingWarnSfx) {
+      this.pendingWarnSfx = false;
+      audio.sting();
     }
 
     // Fire queued juice at the hand (palm landmark) if visible, else screen center.
@@ -218,7 +370,60 @@ class SimonSays implements JukeGame {
       this.fireFx(x, y, ctx.canvas.width);
     }
 
-    if (playing) this.drawRound(ctx, g);
+    if (!playing) return;
+    if (this.warning) {
+      this.drawWarning(ctx, this.warning);
+    } else {
+      const g = frame.gestures && frame.gestures.length > 0 ? frame.gestures[0] : null;
+      this.drawRound(ctx, g);
+    }
+  }
+
+  /** The pre-block "GET READY" banner that teaches the rule about to kick in. */
+  private drawWarning(ctx: CanvasRenderingContext2D, warning: { mode: Mode; ms: number }): void {
+    const cw = ctx.canvas.width;
+    const ch = ctx.canvas.height;
+    const mode = warning.mode;
+    const accent =
+      mode === 'simon' ? COLORS.sunset : mode === 'mirror' ? COLORS.magenta : COLORS.danger;
+    // Pulse the banner so it reads as an alert.
+    const pulse = 0.6 + 0.4 * Math.abs(Math.sin((warning.ms / WARN_MS) * Math.PI * 3));
+
+    ctx.save();
+    ctx.textAlign = 'center';
+
+    // Dim scrim so the banner pops over the camera feed.
+    ctx.fillStyle = rgba(COLORS.base, 0.55);
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(cw / 50)}px ${FONT.display}`;
+    ctx.fillStyle = rgba(COLORS.muted, 0.95);
+    ctx.fillText('GET READY', cw / 2, ch * 0.3);
+
+    const title = mode === 'simon' ? 'SIMON SAYS' : mode === 'mirror' ? 'MIRROR' : 'SIMON × MIRROR';
+    ctx.font = `bold ${Math.round(cw / (mode === 'both' ? 20 : 13))}px ${FONT.display}`;
+    ctx.fillStyle = rgba(accent, pulse);
+    ctx.fillText(title, cw / 2, ch * 0.44);
+
+    ctx.font = `${Math.round(cw / 40)}px ${FONT.display}`;
+    ctx.fillStyle = rgba(COLORS.text, 0.95);
+    if (mode === 'simon') {
+      ctx.fillText('Only move when it says SIMON SAYS', cw / 2, ch * 0.56);
+      ctx.fillStyle = rgba(COLORS.danger, 0.95);
+      ctx.fillText('No "Simon"?  HOLD STILL!', cw / 2, ch * 0.63);
+    } else if (mode === 'mirror') {
+      ctx.fillText('Make the OPPOSITE sign!', cw / 2, ch * 0.56);
+      ctx.font = `${Math.round(cw / 26)}px ${FONT.mono}`;
+      ctx.fillStyle = rgba(COLORS.text, 0.9);
+      ctx.fillText('✋↔✊   👍↔👎', cw / 2, ch * 0.64);
+    } else {
+      ctx.fillText('OPPOSITE sign — but only when Simon says!', cw / 2, ch * 0.56);
+      ctx.font = `${Math.round(cw / 26)}px ${FONT.mono}`;
+      ctx.fillStyle = rgba(COLORS.text, 0.9);
+      ctx.fillText('✋↔✊   👍↔👎', cw / 2, ch * 0.64);
+    }
+    ctx.restore();
   }
 
   private drawRound(ctx: CanvasRenderingContext2D, live: { name: string; score: number } | null): void {
@@ -226,19 +431,59 @@ class SimonSays implements JukeGame {
     const ch = ctx.canvas.height;
     ctx.save();
     ctx.textAlign = 'center';
-
-    // Prompt label + big target sign.
     ctx.textBaseline = 'middle';
-    ctx.font = `${Math.round(cw / 60)}px ${FONT.display}`;
-    ctx.fillStyle = rgba(COLORS.muted, 0.95);
-    ctx.fillText('MAKE THIS SIGN', cw / 2, ch * 0.16);
 
+    const simon = this.mode === 'simon' || this.mode === 'both';
+    const mirror = this.mode === 'mirror' || this.mode === 'both';
+
+    // Mode banner (which block you're in + how many signs remain). The SIMON
+    // banner deliberately avoids the words "simon says" so it can't be confused
+    // with the per-round command below.
+    if (this.mode !== 'normal') {
+      const accent =
+        this.mode === 'simon' ? COLORS.sunset : this.mode === 'mirror' ? COLORS.magenta : COLORS.danger;
+      const label =
+        this.mode === 'simon' ? '⚠' : this.mode === 'mirror' ? '🪞 MIRROR' : '⚠🪞 BOTH';
+      ctx.font = `${Math.round(cw / 56)}px ${FONT.display}`;
+      ctx.fillStyle = rgba(accent, 0.95);
+      ctx.fillText(`${label}   ${this.roundsLeftInMode} LEFT`, cw / 2, ch * 0.08);
+    }
+
+    // The per-round command. The SIMON challenge is reading whether a big
+    // "SIMON SAYS" appears (obey) or only the tempting "DO THE" fake-out (hold
+    // still). MIRROR adds "the opposite". BOTH stacks them: "SIMON SAYS / THE
+    // OPPOSITE" vs the trap "DO THE / OPPOSITE" (which reads as "do the opposite").
+    if (simon) {
+      ctx.font = `bold ${Math.round(cw / 24)}px ${FONT.display}`;
+      ctx.fillStyle = rgba(COLORS.sunset, 0.98);
+      ctx.fillText(this.obey ? 'SIMON SAYS' : 'DO THE', cw / 2, mirror ? ch * 0.12 : ch * 0.15);
+    }
+    if (mirror) {
+      ctx.font = `${Math.round(cw / (simon ? 40 : 50))}px ${FONT.display}`;
+      ctx.fillStyle = rgba(COLORS.magenta, 0.98);
+      ctx.fillText(simon ? 'THE OPPOSITE' : 'MAKE THE OPPOSITE OF', cw / 2, simon ? ch * 0.2 : ch * 0.16);
+    }
+    if (!simon && !mirror) {
+      ctx.font = `${Math.round(cw / 50)}px ${FONT.display}`;
+      ctx.fillStyle = rgba(COLORS.muted, 0.95);
+      ctx.fillText('MAKE THIS SIGN', cw / 2, ch * 0.16);
+    }
+
+    // Big target sign (the stimulus). Mirror flips it for flavor.
     ctx.font = `${Math.round(cw / 9)}px ${FONT.mono}`;
-    ctx.fillText(this.target.emoji, cw / 2, ch * 0.3);
+    if (mirror) {
+      ctx.save();
+      ctx.translate(cw / 2, ch * 0.3);
+      ctx.scale(-1, 1);
+      ctx.fillText(this.shown.emoji, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.fillText(this.shown.emoji, cw / 2, ch * 0.3);
+    }
 
     ctx.font = `${Math.round(cw / 34)}px ${FONT.display}`;
     ctx.fillStyle = rgba(COLORS.text, 0.95);
-    ctx.fillText(this.target.name.toUpperCase(), cw / 2, ch * 0.42);
+    ctx.fillText(this.shown.name.toUpperCase(), cw / 2, ch * 0.42);
 
     // Timer bar.
     const t = Math.max(0, this.timeLeft / this.roundTime);
@@ -248,6 +493,7 @@ class SimonSays implements JukeGame {
     const barY = ch * 0.47;
     ctx.fillStyle = rgba(COLORS.text, 0.14);
     ctx.fillRect(barX, barY, barW, barH);
+    // Same gradient in every round — a trap must look identical to an obey round.
     ctx.fillStyle = t > 0.5 ? COLORS.teal : t > 0.25 ? COLORS.sunset : COLORS.danger;
     ctx.fillRect(barX, barY, barW * t, barH);
 
