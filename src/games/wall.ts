@@ -118,6 +118,11 @@ export const VARIATIONS: Variation[] = [
   { name: 'Arms down', needsFeet: false, armL: { x: -0.35, y: 1 }, armR: { x: 0.35, y: 1 } },
   { name: 'Cactus', needsFeet: false, armL: { x: -0.7, y: -0.7 }, armR: { x: 0.7, y: -0.7 } },
   { name: 'One arm up', needsFeet: false, armL: { x: -0.3, y: -1 }, armR: { x: 0.35, y: 1 } },
+  // Diagonal "disco" — mirror of One arm up so they don't read as the same pose.
+  { name: 'Disco', needsFeet: false, armL: { x: -0.5, y: 0.85 }, armR: { x: 0.5, y: -1 } },
+  // Both arms swung to one side — forces a clear left/right asymmetry.
+  { name: 'Lean left', needsFeet: false, armL: { x: -1, y: -0.25 }, armR: { x: -0.5, y: 0.5 } },
+  { name: 'Lean right', needsFeet: false, armL: { x: 0.5, y: 0.5 }, armR: { x: 1, y: -0.25 } },
   {
     name: 'Star',
     needsFeet: true,
@@ -125,6 +130,24 @@ export const VARIATIONS: Variation[] = [
     armR: { x: 0.8, y: -1 },
     legL: { x: -0.6, y: 1 },
     legR: { x: 0.6, y: 1 },
+  },
+  // T-pose arms with a wide stance — only when the feet are framed.
+  {
+    name: 'Scarecrow',
+    needsFeet: true,
+    armL: { x: -1, y: -0.05 },
+    armR: { x: 1, y: -0.05 },
+    legL: { x: -0.5, y: 1 },
+    legR: { x: 0.5, y: 1 },
+  },
+  // Arms down-and-out over a wide stance.
+  {
+    name: 'Skier',
+    needsFeet: true,
+    armL: { x: -0.45, y: 0.9 },
+    armR: { x: 0.45, y: 0.9 },
+    legL: { x: -0.5, y: 1 },
+    legR: { x: 0.5, y: 1 },
   },
 ];
 

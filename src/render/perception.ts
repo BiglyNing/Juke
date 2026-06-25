@@ -102,6 +102,47 @@ export function drawPoseSkeleton(
   }
 }
 
+/**
+ * CRT "old TV" overlay drawn over the game screen rect: fine scanlines that slowly
+ * crawl, plus a soft bright hum-bar that rolls down the picture (the vertical-hold
+ * drift of an analog set). Purely cosmetic, so it's driven off wall-clock `now`
+ * rather than the simulation clock, and clipped to `rect` so it stays inside the
+ * game screen. Alphas are kept low so gameplay + text stay readable underneath.
+ */
+export function drawCrtScanlines(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  now: number = performance.now(),
+): void {
+  const gap = Math.max(2, Math.round(ctx.canvas.height / 300)); // scanline spacing (device px)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+
+  // Dark scanlines, drifting slowly downward so the lines visibly "move".
+  const drift = (now * 0.018) % gap; // ~18 px/s crawl
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+  for (let y = rect.y - gap + drift; y < rect.y + rect.h; y += gap) {
+    if (y >= rect.y) ctx.fillRect(rect.x, y, rect.w, 1);
+  }
+
+  // Rolling hum-bar: a soft band of brightness sweeping down the screen on a loop.
+  const period = 4200; // ms per full roll
+  const bandH = rect.h * 0.2;
+  const t = (now % period) / period;
+  const top = rect.y - bandH + t * (rect.h + bandH);
+  const grad = ctx.createLinearGradient(0, top, 0, top + bandH);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.05)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = grad;
+  ctx.fillRect(rect.x, top, rect.w, bandH);
+
+  ctx.restore();
+}
+
 // MediaPipe's 21-keypoint hand topology (wrist + 4 joints per finger).
 const HAND_CONNECTIONS: [number, number][] = [
   [0, 1], [1, 2], [2, 3], [3, 4], // thumb

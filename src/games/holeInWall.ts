@@ -25,7 +25,7 @@ import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
 import { limbsFramed, type Point } from '../engine/pose';
 import { buildProfile, canCalibrate, type BodyProfile, type Vec } from '../engine/calibration';
 import { holeFromProfile, pickVariation, rasterizeSolid, type Hole, type Variation } from './wall';
-import { perceptionRect, drawCameraFeed, drawPoseSkeleton } from '../render/perception';
+import { perceptionRect, drawCameraFeed, drawPoseSkeleton, drawCrtScanlines } from '../render/perception';
 import type { Rect } from '../render/canvas';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
@@ -39,6 +39,9 @@ const START_LIVES = 3; // misses allowed before the run ends (forgiving, not one
 // Extra approach time on early walls so a new player can read the pose; it fades
 // out as they pass walls, so the speed ramps *up* with skill, not down.
 const RAMP_BONUS_MS = 2200;
+// Each wall shrinks the pose hole a touch, so the fit gets tighter over a run.
+const SHRINK_PER_WALL = 0.025; // ~2.5% smaller per wall
+const MIN_SHRINK = 0.75; // floor so the hole never shrinks below the body itself
 
 type Phase = 'waiting' | 'approach' | 'result' | 'dead';
 
@@ -61,6 +64,8 @@ class HoleInWall implements JukeGame {
   private lastPose: Point[] | null = null;
   /** Horizontal lane (normalized, raw camera space) the current hole is centered on. */
   private laneCenter = 0.5;
+  /** Walls generated this run — drives the per-wall hole shrink (difficulty ramp). */
+  private wallsSeen = 0;
 
   private variation: Variation | null = null;
   private hole: Hole | null = null;
@@ -91,6 +96,7 @@ class HoleInWall implements JukeGame {
     this.baseProfile = null;
     this.lastPose = null;
     this.laneCenter = 0.5;
+    this.wallsSeen = 0;
     this.hole = null;
     this.variation = null;
     this.z = 0;
@@ -214,7 +220,9 @@ class HoleInWall implements JukeGame {
     if (!p) return;
     this.variation = pickVariation(p, Math.random, avoid ?? undefined);
     this.laneCenter = relane ? this.pickLane() : (p.shoulderL.x + p.shoulderR.x) / 2;
-    this.hole = holeFromProfile(this.placeAtLane(p, this.laneCenter), this.variation);
+    const placed = this.shrinkProfile(this.placeAtLane(p, this.laneCenter), this.shrinkScale());
+    this.hole = holeFromProfile(placed, this.variation);
+    this.wallsSeen++;
     this.z = 0;
     this.minRatio = Infinity;
     this.liveRatio = 1;
@@ -243,6 +251,38 @@ class HoleInWall implements JukeGame {
       hasArms: base.hasArms,
       hasLegs: base.hasLegs,
       hasFeet: base.hasFeet,
+    };
+  }
+
+  /** Hole scale for the current wall: 1 on the first, shrinking each wall to a floor. */
+  private shrinkScale(): number {
+    return Math.max(MIN_SHRINK, 1 - this.wallsSeen * SHRINK_PER_WALL);
+  }
+
+  /**
+   * Uniformly shrink the whole silhouette around its body center by `scale` — the
+   * anchors pull in toward the center and every radius/limb length scales with
+   * them, so the hole stays the same pose but gets tighter to fit through.
+   */
+  private shrinkProfile(p: BodyProfile, scale: number): BodyProfile {
+    if (scale >= 1) return p;
+    const cx = (p.shoulderL.x + p.shoulderR.x + p.hipL.x + p.hipR.x) / 4;
+    const cy = (p.shoulderL.y + p.shoulderR.y + p.hipL.y + p.hipR.y) / 4;
+    const s = (v: Vec): Vec => ({ x: cx + (v.x - cx) * scale, y: cy + (v.y - cy) * scale });
+    return {
+      ...p,
+      head: s(p.head),
+      neck: s(p.neck),
+      pelvis: s(p.pelvis),
+      shoulderL: s(p.shoulderL),
+      shoulderR: s(p.shoulderR),
+      hipL: s(p.hipL),
+      hipR: s(p.hipR),
+      headR: p.headR * scale,
+      torsoR: p.torsoR * scale,
+      limbR: p.limbR * scale,
+      armLen: p.armLen * scale,
+      legLen: p.legLen * scale,
     };
   }
 
@@ -304,6 +344,7 @@ class HoleInWall implements JukeGame {
     // Camera feed + skeleton only — no teal body silhouette.
     if (this.phase === 'waiting') {
       if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+      drawCrtScanlines(ctx, rect);
       return;
     }
 
@@ -312,6 +353,8 @@ class HoleInWall implements JukeGame {
     // No silhouette overlay during play — the live camera feed + pose skeleton
     // show the player against the wall without the teal body fill on top.
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+    // CRT scanline/roll filter over the whole game scene (under the HUD text).
+    drawCrtScanlines(ctx, rect);
     this.drawFraming(ctx, frame);
     this.drawGameplayText(ctx);
   }

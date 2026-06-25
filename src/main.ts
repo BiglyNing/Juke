@@ -24,7 +24,6 @@ import { Shell } from './shell/app';
 import { juice } from './juice/juice';
 import { audio } from './juice/audio';
 import { capture } from './juice/capture';
-import sampleFixtureJson from './engine/__fixtures__/sample.json';
 
 // Registering a game is a side-effect import. Adding a game = import its module.
 import './games/holeInWall';
@@ -208,7 +207,7 @@ function drawVisibilityScores(ctx: CanvasRenderingContext2D, pose: { visibility?
 }
 
 // ---------------------------------------------------------------------------
-// Keys: D debug · R record · F replay the bundled fixture (no camera needed).
+// Keys: D debug · R record.
 // Drag-and-drop a recorded fixture JSON to replay it through the same loop.
 // ---------------------------------------------------------------------------
 
@@ -226,8 +225,6 @@ window.addEventListener('keydown', (e) => {
       setDebugVisible(true);
       setRecordingStatus('recording… 0 frames');
     }
-  } else if (k === 'f') {
-    void replayFixture(sampleFixtureJson as unknown as Fixture);
   }
 });
 
