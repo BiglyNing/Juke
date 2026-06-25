@@ -124,3 +124,37 @@ export function maskOverlap(a: BinaryMask, b: BinaryMask): { hit: boolean; ratio
   }
   return { hit: inter > 0, ratio: area === 0 ? 0 : inter / area };
 }
+
+/**
+ * Fraction of a circle's cells (center `cx`,`cy`, radius `rad`, all in grid-cell
+ * units, cell centers at integer+0.5) that are occupied in `mask` — i.e. how much
+ * of a round object lands on the silhouette. Dodge uses this for object↔player
+ * collision. Allocation-free: scans only the circle's bounding box. An empty
+ * circle (radius < ~half a cell, or entirely off-grid) yields 0.
+ */
+export function circleOverlapRatio(
+  mask: BinaryMask,
+  cx: number,
+  cy: number,
+  rad: number,
+): number {
+  const { width: w, height: h, data } = mask;
+  const r2 = rad * rad;
+  const x0 = Math.max(0, Math.floor(cx - rad));
+  const x1 = Math.min(w - 1, Math.ceil(cx + rad));
+  const y0 = Math.max(0, Math.floor(cy - rad));
+  const y1 = Math.min(h - 1, Math.ceil(cy + rad));
+  let area = 0;
+  let inter = 0;
+  for (let gy = y0; gy <= y1; gy++) {
+    const ddy = gy + 0.5 - cy;
+    for (let gx = x0; gx <= x1; gx++) {
+      const ddx = gx + 0.5 - cx;
+      if (ddx * ddx + ddy * ddy <= r2) {
+        area++;
+        if (data[gy * w + gx]) inter++;
+      }
+    }
+  }
+  return area === 0 ? 0 : inter / area;
+}

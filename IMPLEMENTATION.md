@@ -23,7 +23,7 @@ Legend for each phase: **Goal** · **Why here** · **Tasks** · **Exit criteria*
 
 ## Build status (living)
 
-Phases are checked off as their exit criteria are met. **P0–P8 are in** (production build + 57 unit tests green); the live-webcam / live-audio parts of each exit criterion are validated by hand, not in CI.
+Phases are checked off as their exit criteria are met. **P0–P8 and P10 are in** (production build + 61 unit tests green); the live-webcam / live-audio parts of each exit criterion are validated by hand, not in CI.
 
 | Phase | Status | Notes |
 | --- | --- | --- |
@@ -36,8 +36,8 @@ Phases are checked off as their exit criteria are met. **P0–P8 are in** (produ
 | P6 — Hand Simon-Says | ✅ done | Seated gesture game on the Gesture Recognizer |
 | P7 — juice layer | ✅ done | Particles/shake/time-warp services, procedural Web-Audio music+SFX, neon silhouette + trail, crack meter, WebM replay-clip capture |
 | P8 — share card & leaderboard | ✅ done | PNG neon-duotone share card (download + clipboard) from the freeze-frame; localStorage daily/all-time best surfaced on the menu + game-over. Daily seed left for later (optional). |
-| P9 — submission artifacts | ◐ in progress | **Attract mode done** (menu/landing replays the bundled fixture as a looping neon-silhouette ghost — finally gives `drawNeonSilhouette` a caller); README front-door ready. **Remaining (manual):** record the demo GIF/video from the in-app "Save clip" WebM, and smoke-test the deployed link on a fresh machine. |
-| P10 — Dodge (3rd mode) | ⬜ | Cuttable |
+| P9 — submission artifacts | ⬜ | README front-door ready. **Remaining (manual):** record the demo GIF/video from the in-app "Save clip" WebM, and smoke-test the deployed link on a fresh machine. (A menu attract loop was prototyped and removed — the raw fixture mask read as a moving blob, not a person.) |
+| P10 — Dodge (3rd mode) | ✅ done | `games/dodge.ts`: neon **drops** rain down (step aside) and **sweepers** fly across (duck under) — **calibrated to the player**: objects sized to shoulder width, drops aimed at the live silhouette centroid, and sweepers confined to a head→duck-floor band derived from the player's calibrated height so they're always crouch-able. Circle-vs-silhouette collision via a new `circleOverlapRatio`; spawn/speed ramp; hit/graze/dodge juice. **Zero engine changes** — new file + registration + one menu blurb. |
 | P11 — visual identity & ship | ⬜ | Art-direction pass, mascot, refreshed artifact |
 
 **Contract evolution so far (vs the Phase 3 sketch).** The seam held: two games and a whole shell were added with only two small, deliberate extensions —
@@ -45,6 +45,7 @@ Phases are checked off as their exit criteria are met. **P0–P8 are in** (produ
 - **P6** added `PerceptionFrame.gestures` (the Gesture Recognizer's top built-in label per hand) so Simon-Says can match by label. Everything else about the second game was *one new file + registration*, exactly as the contract intended.
 - **P7** added two small, optional seams and held the rest: `Engine` now takes an optional `FrameModulator` (the juice manager supplies `timeScale()` for freeze/slow-mo and `cameraOffset()` for screen shake — the engine stays ignorant of what juice *is*), and `JukeGame.health?()` lets a game opt into the HUD crack meter (same pattern as `configure?`). Both games wired their pass/crush/hit/miss feedback by *calling* the juice services at the events they already computed — no change to the per-frame contract.
 - **P8** added one optional seam, same pattern again: `JukeGame.tagline?()` returns a short flavor line for the share card / game-over ("Squashed by: Cactus", "Top streak: 7"). The leaderboard and share card are pure shell concerns — they read `score()` and the freeze-frame the P7 capture buffer already holds — so neither game needed any other change. No change to the per-frame contract.
+- **P10** changed *nothing* in the contract — the headline result. Dodge is a new game file + registration + one menu blurb, reusing `configure?` / `health?` / `tagline?` exactly as they stood. The only shared-code addition was a pure `circleOverlapRatio` helper in `engine/mask.ts` (object↔silhouette collision), tested alongside `maskOverlap`. A whole third mode for ~one file.
 
 See **Appendix — Architecture as built** for the realized layering and the "add a new game" checklist.
 
@@ -537,7 +538,7 @@ Concrete notes so the next phase doesn't start from a blank page. Grouped by the
 **HUD / shell**
 - **Combo + health/crack meter (deferred from P5).** Let a game *optionally* expose `combo()` / `health()` (0..1); the shell HUD renders them when present and nothing when absent — the same opt-in pattern as `configure?`. The crack meter is really the P7 soft-fail mechanic surfaced in the HUD.
 - **Shared canvas easing.** When juice (P7) starts tweening on the canvas, add easing helpers to `shell/theme.ts` mirroring the CSS `--ease-*` tokens so DOM and canvas motion match. (They were removed for now to avoid dead code — re-add them with their first real caller.)
-- **Attract / idle mode (P9).** ✅ Done — `Shell.drawIdle` draws an `Attract` (`shell/attract.ts`) that replays the bundled fixture through `drawNeonSilhouette`, so the menu/landing always shows a drifting silhouette ghost. The menu overlay was made slightly translucent so it reads through.
+- **Attract / idle mode (P9).** The menu's idle backdrop (`Shell.drawIdle`) is the hook point — a looping silhouette ghost or replayed fixture there so the first frame moves. (Prototyped in P9 and removed: the raw fixture mask read as a moving blob, not a person. A cleaner procedural pose-figure — a glowing stick figure cycling the wall poses — would be the way back in.)
 
 **Hand Simon-Says — rich tier (P11 stretch)**
 - Beyond the 7 built-in labels: grade *arbitrary* poses from landmarks via `fingerStates` (already in `pose.ts`) + in-plane rotation — never on palm-facing depth (too noisy from one webcam). The target set becomes data instead of the model's fixed labels.

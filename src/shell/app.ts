@@ -22,8 +22,6 @@ import { limbsFramed } from '../engine/pose';
 import { audio } from '../juice/audio';
 import { juice } from '../juice/juice';
 import { capture } from '../juice/capture';
-import { Attract } from './attract';
-import type { Fixture } from '../engine/fixture';
 import { COLORS, rgba } from './theme';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
@@ -37,6 +35,7 @@ type State = 'title' | 'menu' | 'calibrate' | 'countdown' | 'play' | 'gameover' 
 const BLURBS: Record<string, string> = {
   holeInWall: 'A wall with a person-shaped gap rushes you. Contort to fit — or get squashed.',
   simonSays: 'Mimic the hand sign before the timer runs out. Seated and laptop-friendly — just show your hand.',
+  dodge: 'Neon objects rain down and sweep across at you. Step aside from the drops, duck under the sweepers.',
 };
 
 const SEATED_HOLD_MS = 1000; // hold a hand in view this long to pass seated calibration
@@ -69,8 +68,6 @@ export class Shell {
   private shareCanvas = document.createElement('canvas');
   /** The finished run's score — for stamping the saved share-card filename. */
   private lastScore = 0;
-  /** Looping silhouette ghost behind the menu/landing (Phase 9 attract mode). */
-  private attract = new Attract();
 
   constructor(engine: Engine) {
     this.engine = engine;
@@ -80,11 +77,6 @@ export class Shell {
   /** Wire the live camera producer (called once perception is ready). */
   attachProducer(producer: Producer): void {
     this.engine.setProducer(producer);
-  }
-
-  /** Hand the attract loop its fixture so the menu/landing is never static (Phase 9). */
-  loadAttract(fixture: Fixture): void {
-    this.attract.load(fixture);
   }
 
   // --- per-frame, driven by the engine overlay hook -----------------------
@@ -114,7 +106,6 @@ export class Shell {
     this.game = null;
     this.gameId = null;
     this.clearClipPreview();
-    this.attract.reset(); // restart the silhouette ghost cleanly each time we land here
     audio.startMusic(); // looping menu track (idempotent; no-op until audio is unlocked)
     audio.setIntensity(0);
     this.engine.clearActiveGame();
@@ -430,12 +421,5 @@ export class Shell {
     g.addColorStop(1, rgba(COLORS.bg, 0));
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
-
-    // Attract loop: a faint, drifting silhouette ghost behind the menu, so the
-    // screen is never static (Phase 9). Menu only — the landing should stay calm,
-    // and game-over's result card/clip is the focus there.
-    if (this.state === 'menu') {
-      this.attract.draw(ctx, now, 0.4);
-    }
   }
 }

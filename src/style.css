@@ -422,12 +422,9 @@ body {
   gap: var(--sp-6);
   padding: var(--sp-6);
   pointer-events: auto;
-  /* Slightly translucent so the attract-mode silhouette ghost (Phase 9) drifts
-     through behind the cards as faint ambient motion; blur keeps it soft and the
-     menu text crisp. */
   background:
     radial-gradient(ellipse 90% 60% at 50% 0%, rgba(255, 79, 216, 0.12), transparent 60%),
-    rgba(12, 10, 28, 0.8);
+    rgba(12, 10, 28, 0.82);
   backdrop-filter: blur(4px);
   animation: fade-in var(--dur-med) var(--ease-out);
 }

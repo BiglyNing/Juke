@@ -13,7 +13,7 @@
 
 - **Hole-in-the-Wall** (flagship) — a wall with a person-shaped gap rushes at you; contort to fit through or get squashed.
 - **Hand Simon-Says** — seated and laptop-friendly; mimic the hand sign before the timer runs out.
-- **Dodge the Objects** *(planned)* — objects fly in; move your body out of the way.
+- **Dodge** — neon objects fly in from every side; slip, duck, and weave your whole body out of the way.
 
 ## How it works
 
@@ -47,4 +47,4 @@ The build is phased to **de-risk the hardest part (in-browser webcam perception)
 
 ## Status
 
-🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with two complete modes — **Hole-in-the-Wall** (standing) and **Hand Simon-Says** (seated) — plus the full juice layer (audio + effects), a downloadable PNG result card, a local daily/all-time leaderboard, and an always-moving **attract loop** on the menu (a looping silhouette ghost, so the first frame is never static). The remaining submission to-dos are content captures: the gameplay GIF above and a short demo video, plus a fresh-machine smoke test of the live link. See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.
+🚧 In active development. **Playable today:** the arcade shell (menu, calibration, countdown, HUD, game-over) with three complete modes — **Hole-in-the-Wall** and **Dodge** (standing) and **Hand Simon-Says** (seated) — plus the full juice layer (audio + effects), a downloadable PNG result card, and a local daily/all-time leaderboard. The remaining submission to-dos are content captures: the gameplay GIF above and a short demo video, plus a fresh-machine smoke test of the live link. See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the phase-by-phase plan and a live build-status table.

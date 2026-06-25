@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { downsample, smoothEMA, binarize, erode, maskOverlap, type Grid } from './mask.ts';
+import { downsample, smoothEMA, binarize, erode, maskOverlap, circleOverlapRatio, type Grid } from './mask.ts';
 
 test('downsample averages source pixels into cells', () => {
   // 4x4, left half = 1, right half = 0 -> 2x2 -> left column 1, right column 0.
@@ -58,4 +58,27 @@ test('maskOverlap of an empty silhouette is no hit, zero ratio', () => {
   const a = { data: new Uint8Array([0, 0, 0, 0]), width: 2, height: 2 };
   const b = { data: new Uint8Array([1, 1, 1, 1]), width: 2, height: 2 };
   assert.deepEqual(maskOverlap(a, b), { hit: false, ratio: 0 });
+});
+
+test('circleOverlapRatio: a circle over a full mask is fully covered', () => {
+  const full = { data: new Uint8Array(64).fill(1), width: 8, height: 8 };
+  assert.equal(circleOverlapRatio(full, 4, 4, 2), 1);
+});
+
+test('circleOverlapRatio: a circle over an empty mask covers nothing', () => {
+  const empty = { data: new Uint8Array(64), width: 8, height: 8 };
+  assert.equal(circleOverlapRatio(empty, 4, 4, 2), 0);
+});
+
+test('circleOverlapRatio: half-occupied mask covers about half the circle', () => {
+  // Left half occupied; a circle centered on the seam should be ~50% covered.
+  const data = new Uint8Array(64);
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) data[y * 8 + x] = x < 4 ? 1 : 0;
+  const ratio = circleOverlapRatio({ data, width: 8, height: 8 }, 4, 4, 3);
+  assert.ok(ratio > 0.4 && ratio < 0.6, `expected ~0.5, got ${ratio}`);
+});
+
+test('circleOverlapRatio: a circle entirely off the grid is empty (0)', () => {
+  const full = { data: new Uint8Array(64).fill(1), width: 8, height: 8 };
+  assert.equal(circleOverlapRatio(full, -5, -5, 1), 0);
 });
