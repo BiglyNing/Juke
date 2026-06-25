@@ -97,7 +97,7 @@ const FEEDBACK_MS = 480;
 const BLOCK_LEN = 10; // signs in a SIMON/MIRROR block
 const NORMAL_MIN = 5; // straight signs between blocks (inclusive range)
 const NORMAL_MAX = 9;
-const WARN_MS = 1700; // warning-banner lead-in before a block begins
+const WARN_MS = 3400; // warning-banner lead-in before a block begins (long enough to read the rule)
 const SIMON_TRAP_PROB = 0.42; // chance a SIMON round is a "didn't say" trap
 
 type Phase = 'waiting' | 'play' | 'dead';

@@ -40,7 +40,7 @@ import type { Rect } from '../render/canvas';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
 import { debugParams } from '../shell/debug';
-import { COLORS, rgba } from '../shell/theme';
+import { COLORS, FONT, rgba } from '../shell/theme';
 
 const START_LIVES = 3;
 const FIRST_SPAWN_MS = 800; // grace before the first object after the countdown
@@ -67,6 +67,14 @@ const DEFAULT_SWEEP_BOT = 0.32; // fallback duck floor
 // surprise. The lead time shrinks as difficulty ramps — still a fair beat.
 const WARN_MAX_MS = 900;
 const WARN_MIN_MS = 520;
+// Posture rule: the player has to keep *standing*. Their head must stay above a
+// "stand line" — the bottom of the calibrated sweeper (sideways-dodge) zone. They
+// may dip below it to duck under a sweeper, but if the head stays below it for
+// longer than this grace window it costs a life: no camping in a crouch.
+const STAND_GRACE_MS = 3000;
+const HEAD_LM = 0; // MediaPipe nose landmark
+const HEAD_RISE = 0.2; // head sits this many shoulder-widths above the nose (matches calibration)
+const HEAD_VIS = 0.5; // nose must be at least this visible to judge posture
 
 type Phase = 'waiting' | 'play' | 'dead';
 
@@ -135,8 +143,12 @@ class Dodge implements JukeGame {
   /** Calibrated sweeper height band: head height down to the duck floor. */
   private sweepTopY = DEFAULT_SWEEP_TOP;
   private sweepBotY = DEFAULT_SWEEP_BOT;
+  /** The "stand line": the head must stay above this Y (= bottom of the sweeper zone). */
+  private standLineY = DEFAULT_SWEEP_BOT;
+  /** How long the head has been below the stand line (ms); a penalty fires past the grace. */
+  private outOfZoneMs = 0;
   /** Queued in update(), fired in render() where canvas coords are known. */
-  private fx: { kind: 'hit' | 'graze'; fatal: boolean; nx: number; ny: number; color: string }[] = [];
+  private fx: { kind: 'hit' | 'graze' | 'slouch'; fatal: boolean; nx: number; ny: number; color: string }[] = [];
 
   init(): void {
     /* engine calls reset() before init; nothing else to allocate */
@@ -148,6 +160,7 @@ class Dodge implements JukeGame {
     this.centerX = 0.5;
     this.sweepTopY = DEFAULT_SWEEP_TOP;
     this.sweepBotY = DEFAULT_SWEEP_BOT;
+    this.standLineY = DEFAULT_SWEEP_BOT;
     this.phase = 'waiting';
   }
 
@@ -175,6 +188,9 @@ class Dodge implements JukeGame {
       this.sweepTopY = DEFAULT_SWEEP_TOP;
       this.sweepBotY = DEFAULT_SWEEP_BOT;
     }
+    // The stand line sits at the bottom of the sweeper zone: standing keeps the
+    // head above it; only a real duck/crouch drops below.
+    this.standLineY = this.sweepBotY;
     this.phase = 'play';
   }
 
@@ -187,6 +203,7 @@ class Dodge implements JukeGame {
     this.elapsed = 0;
     this.spawnTimer = FIRST_SPAWN_MS;
     this.lastHitType = '';
+    this.outOfZoneMs = 0;
     this.fx = [];
   }
 
@@ -209,6 +226,10 @@ class Dodge implements JukeGame {
         this.spawnTimer = this.spawnInterval();
       }
     }
+
+    // Posture rule: keep the head above the stand line. A brief dip (to duck) is
+    // fine, but staying crouched past the grace window costs a life.
+    this.updatePosture(frame, dt, present);
 
     // Advance telegraphs: a queued object waits out its warning, then enters play
     // as a live, collidable object. Warnings tick regardless of framing so a
@@ -254,6 +275,31 @@ class Dodge implements JukeGame {
     this.lives--;
     this.lastHitType = o.type.name;
     this.fx.push({ kind: 'hit', fatal: this.lives <= 0, nx: o.x, ny: o.y, color: o.type.color });
+  }
+
+  /**
+   * Track head height and enforce the stand line. While the player is framed and
+   * the nose is visible, accumulate time spent below the line; cross the grace
+   * window and it's a life (then the clock resets so they must pop back up). The
+   * head is lifted to the same point calibration uses (a touch above the nose) so
+   * the live measure matches the line derived from it.
+   */
+  private updatePosture(frame: PerceptionFrame, dt: number, present: boolean): void {
+    if (!present || !frame.pose) return;
+    const nose = frame.pose[HEAD_LM];
+    if (!nose || (nose.visibility ?? 0) < HEAD_VIS) return;
+    const headY = nose.y - this.unit * HEAD_RISE;
+    if (headY > this.standLineY) {
+      this.outOfZoneMs += dt;
+      if (this.outOfZoneMs >= STAND_GRACE_MS) {
+        this.outOfZoneMs = 0;
+        this.lives--;
+        this.lastHitType = 'slouch';
+        this.fx.push({ kind: 'slouch', fatal: this.lives <= 0, nx: nose.x, ny: this.standLineY, color: COLORS.danger });
+      }
+    } else {
+      this.outOfZoneMs = 0;
+    }
   }
 
   // --- collision -----------------------------------------------------------
@@ -368,6 +414,7 @@ class Dodge implements JukeGame {
 
   /** Share-card flavor: what finally clipped you. */
   tagline(): string {
+    if (this.lastHitType === 'slouch') return 'Caught slouching';
     return this.lastHitType ? `Clipped by a ${this.lastHitType}` : 'Untouchable';
   }
 
@@ -391,6 +438,57 @@ class Dodge implements JukeGame {
     for (const p of this.pending) this.drawTelegraph(ctx, p, rect); // warnings, under the objects
     for (const o of this.objects) this.drawObject(ctx, o, rect);
     if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect);
+    if (this.phase === 'play') this.drawStandZone(ctx, rect);
+  }
+
+  /**
+   * The stand line + a "STAND UP!" countdown. The line marks the bottom of the
+   * standing zone; while the head is below it, a shrinking bar shows how much of
+   * the 3s grace is left before it costs a life. Calm when you're upright,
+   * pulsing red the moment you drop below.
+   */
+  private drawStandZone(ctx: CanvasRenderingContext2D, rect: Rect): void {
+    const y = rect.y + this.standLineY * rect.h;
+    const danger = this.outOfZoneMs > 0;
+    const remain = clamp(1 - this.outOfZoneMs / STAND_GRACE_MS, 0, 1);
+    const pulse = danger ? 0.55 + 0.45 * Math.abs(Math.sin(this.outOfZoneMs / 110)) : 0.4;
+
+    ctx.save();
+    // The line itself.
+    ctx.setLineDash([rect.w * 0.022, rect.w * 0.016]);
+    ctx.lineWidth = Math.max(2, rect.w * 0.004);
+    ctx.strokeStyle = rgba(danger ? COLORS.danger : COLORS.teal, pulse);
+    ctx.beginPath();
+    ctx.moveTo(rect.x, y);
+    ctx.lineTo(rect.x + rect.w, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Quiet hint label so the rule reads even when you're fine.
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'left';
+    ctx.font = `${Math.round(rect.w / 46)}px ${FONT.mono}`;
+    ctx.fillStyle = rgba(danger ? COLORS.danger : COLORS.teal, 0.7);
+    ctx.fillText('▲ STAND ABOVE', rect.x + rect.w * 0.02, y - rect.h * 0.012);
+
+    // Crouched: shout + countdown bar.
+    if (danger) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${Math.round(rect.w / 18)}px ${FONT.display}`;
+      ctx.fillStyle = rgba(COLORS.danger, pulse);
+      ctx.fillText('STAND UP!', rect.x + rect.w / 2, y - rect.h * 0.07);
+
+      const barW = rect.w * 0.3;
+      const barH = Math.max(5, rect.h * 0.012);
+      const bx = rect.x + (rect.w - barW) / 2;
+      const by = y - rect.h * 0.03;
+      ctx.fillStyle = rgba(COLORS.text, 0.18);
+      ctx.fillRect(bx, by, barW, barH);
+      ctx.fillStyle = COLORS.danger;
+      ctx.fillRect(bx, by, barW * remain, barH);
+    }
+    ctx.restore();
   }
 
   /**
@@ -462,7 +560,17 @@ class Dodge implements JukeGame {
     for (const e of this.fx) {
       const x = rect.x + (1 - e.nx) * rect.w;
       const y = rect.y + e.ny * rect.h;
-      if (e.kind === 'hit') {
+      if (e.kind === 'slouch') {
+        // Distinct "you slouched" penalty: a red full-frame pulse + a low buzzer,
+        // no shatter (nothing struck you — you broke posture).
+        juice.fx.flash(COLORS.danger, e.fatal ? 0.4 : 0.22, e.fatal ? 460 : 300);
+        juice.camera.shake(e.fatal ? 1 : 0.45);
+        if (e.fatal) {
+          juice.time.freeze(240);
+          audio.duck(900);
+        }
+        audio.thud();
+      } else if (e.kind === 'hit') {
         juice.fx.flash(COLORS.danger, e.fatal ? 0.4 : 0.24, e.fatal ? 460 : 280);
         juice.camera.shake(e.fatal ? 1 : 0.55);
         juice.time.freeze(e.fatal ? 240 : 110);
