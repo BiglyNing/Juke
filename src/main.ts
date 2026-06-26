@@ -357,3 +357,13 @@ showOverlay({
   action: { label: 'Enable camera & start', onClick: start },
   note: 'D · debug overlay   M · mute',
 });
+
+// Kick the looping track in on the first user gesture so the title screen has
+// music too (autoplay rules forbid sound before any interaction). startMusic is
+// idempotent, so this just carries seamlessly into the menu.
+function startTitleMusic(): void {
+  audio.unlock();
+  audio.startMusic();
+}
+window.addEventListener('pointerdown', startTitleMusic, { once: true });
+window.addEventListener('keydown', startTitleMusic, { once: true });

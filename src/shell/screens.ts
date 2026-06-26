@@ -22,6 +22,20 @@ export interface MenuCard {
   best?: number;
 }
 
+/** The daily-challenge banner above the menu grid (Phase 12). */
+export interface DailyMenu {
+  /** Today's featured game title. */
+  title: string;
+  /** Short date label, e.g. "JUN 26". */
+  dateLabel: string;
+  /** Today's best on the challenge (0 = not played yet today). */
+  best: number;
+  /** Current play streak in days (0 = lapsed / never played). */
+  streak: number;
+  /** Launch today's challenge. */
+  onPlay: () => void;
+}
+
 export interface CalibView {
   intensity: 'standing' | 'seated';
   heading: string;
@@ -46,6 +60,8 @@ export interface GameOverView {
   clip?: { onSave: () => void };
   /** When present, a "Save image" button exports the PNG share card (Phase 8). */
   share?: { onSave: () => void };
+  /** When the run was a daily challenge (Phase 12), the streak line to show. */
+  daily?: { streak: number };
 }
 
 // One root layer for all lifecycle screens, between the message overlay (z 40)
@@ -97,7 +113,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 // --- Menu ------------------------------------------------------------------
 
-export function showMenu(cards: MenuCard[], onSelect: (id: string) => void): void {
+export function showMenu(
+  cards: MenuCard[],
+  onSelect: (id: string) => void,
+  daily?: DailyMenu,
+): void {
   hideAll();
   if (!menuEl) {
     menuEl = el('div', 'menu screen');
@@ -109,6 +129,20 @@ export function showMenu(cards: MenuCard[], onSelect: (id: string) => void): voi
   const mark = el('div', 'wordmark menu__mark', 'JUKE');
   const tag = el('p', 'menu__tag', 'Pick a game. Your body is the controller.');
   head.append(mark, tag);
+
+  // "Beat the creator!" — the creator's scores to chase, one chip per game.
+  const challenge = el('div', 'challenge');
+  challenge.append(el('div', 'challenge__title wordmark', 'Beat the creator!'));
+  const scores = el('div', 'challenge__scores');
+  for (const s of CREATOR_SCORES) {
+    const chip = el('div', 'challenge__chip');
+    chip.append(
+      el('span', 'challenge__game', s.game),
+      el('span', 'challenge__score', s.score),
+    );
+    scores.appendChild(chip);
+  }
+  challenge.appendChild(scores);
 
   const grid = el('div', 'menu__grid');
   for (const c of cards) {
@@ -123,9 +157,47 @@ export function showMenu(cards: MenuCard[], onSelect: (id: string) => void): voi
     grid.appendChild(card);
   }
 
-  menuEl.append(head, grid);
+  if (daily) menuEl.append(head, dailyBanner(daily), challenge, grid);
+  else menuEl.append(head, challenge, grid);
   menuEl.classList.add('show');
 }
+
+/**
+ * The daily-challenge banner: today's featured game, the date, your best so far,
+ * and a play button. The whole banner is the click target (with an explicit
+ * button for affordance/keyboard focus).
+ */
+function dailyBanner(d: DailyMenu): HTMLElement {
+  const banner = el('button', 'daily');
+  banner.type = 'button';
+
+  const left = el('div', 'daily__left');
+  const label = el('div', 'daily__label');
+  label.append(iconSpan('bolt'), el('span', undefined, `DAILY CHALLENGE · ${d.dateLabel}`));
+  const title = el('div', 'daily__game wordmark', d.title);
+  left.append(label, title);
+
+  const stats = el('div', 'daily__stats');
+  if (d.streak > 0) {
+    const streak = el('div', 'daily__streak');
+    streak.append(iconSpan('bolt'), el('span', undefined, `${d.streak}-DAY STREAK`));
+    stats.appendChild(streak);
+  }
+  if (d.best > 0) stats.appendChild(el('div', 'daily__best', `TODAY'S BEST ${d.best}`));
+
+  const cta = el('span', 'daily__cta', d.best > 0 ? 'PLAY AGAIN' : 'PLAY');
+
+  banner.append(left, stats, cta);
+  banner.addEventListener('click', d.onPlay);
+  return banner;
+}
+
+/** The creator's best scores — the bar at the top of the menu dares you to beat them. */
+const CREATOR_SCORES: { game: string; score: string }[] = [
+  { game: 'Hole in the Wall', score: '26' },
+  { game: 'Simon Says', score: '145' },
+  { game: 'Dodge', score: '17' },
+];
 
 // --- Calibration -----------------------------------------------------------
 
@@ -272,6 +344,12 @@ export function showGameOver(view: GameOverView): void {
       best.textContent = `BEST ${view.best.value}`;
     }
     scoreWrap.appendChild(best);
+  }
+  if (view.daily) {
+    const tag = el('div', 'gameover__daily');
+    const label = view.daily.streak > 1 ? ` DAILY CHALLENGE · ${view.daily.streak}-DAY STREAK` : ' DAILY CHALLENGE';
+    tag.append(iconSpan('bolt'), document.createTextNode(label));
+    scoreWrap.appendChild(tag);
   }
 
   gameoverEl.append(title, scoreWrap);

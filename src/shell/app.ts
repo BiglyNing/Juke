@@ -28,6 +28,7 @@ import { mascot } from './mascot';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
 import { leaderboard } from './leaderboard';
+import { daily } from './daily';
 import { renderShareCard, cardToBlob, downloadCard, copyCard } from './shareCard';
 import * as screens from './screens';
 
@@ -39,6 +40,12 @@ const BLURBS: Record<string, string> = {
   simonSays: 'Mimic the shown hand sign before the timer runs out. Watch out for the tricky modifiers that appear whenever they feel like it.',
   dodge: 'Dodge the neon-balls!!! Thats about it.',
 };
+
+/** Short uppercase date for the daily banner, e.g. "JUN 26". */
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function dateLabel(d: Date = new Date()): string {
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
 
 const SEATED_HOLD_MS = 1000; // hold a hand in view this long to pass seated calibration
 const COUNTDOWN: { text: string; ms: number }[] = [
@@ -54,6 +61,8 @@ export class Shell {
 
   private gameId: string | null = null;
   private game: JukeGame | null = null;
+  /** True while the active run is today's daily challenge (Phase 12). */
+  private isDaily = false;
 
   private calibrator = new Calibrator();
   private result: CalibrationResult | null = null;
@@ -107,24 +116,46 @@ export class Shell {
     this.state = 'menu';
     this.game = null;
     this.gameId = null;
+    this.isDaily = false;
     this.clearClipPreview();
     audio.startMusic(); // looping menu track (idempotent; no-op until audio is unlocked)
     audio.setIntensity(0);
     this.engine.clearActiveGame();
     mascot.show(); // Bit idle-bobs on the menu
     mascot.idle();
+    const games = allGames().filter((g) => g.id !== 'test');
     screens.showMenu(
-      allGames()
-        .filter((g) => g.id !== 'test')
-        .map((g) => ({
-          id: g.id,
-          title: g.title,
-          intensity: g.intensity,
-          blurb: BLURBS[g.id] ?? '',
-          best: leaderboard.bests(g.id).allTime, // persisted across reloads (Phase 8)
-        })),
+      games.map((g) => ({
+        id: g.id,
+        title: g.title,
+        intensity: g.intensity,
+        blurb: BLURBS[g.id] ?? '',
+        best: leaderboard.bests(g.id).allTime, // persisted across reloads (Phase 8)
+      })),
       (id) => void this.selectGame(id),
+      this.dailyMenu(games),
     );
+  }
+
+  /** Build the daily-challenge banner view: today's featured game + your progress. */
+  private dailyMenu(games: JukeGame[]): screens.DailyMenu | undefined {
+    const id = daily.gameId(games.map((g) => g.id));
+    const game = getGame(id);
+    if (!game) return undefined;
+    const { best, streak } = daily.view();
+    return {
+      title: game.title,
+      dateLabel: dateLabel(),
+      best,
+      streak,
+      onPlay: () => void this.playDaily(id),
+    };
+  }
+
+  /** Launch today's challenge: same flow as a normal pick, flagged as the daily. */
+  private async playDaily(id: string): Promise<void> {
+    this.isDaily = true;
+    await this.selectGame(id);
   }
 
   private async selectGame(id: string): Promise<void> {
@@ -323,6 +354,8 @@ export class Shell {
 
     // Record the run (persists across reloads) and render the share card (Phase 8).
     const outcome = this.gameId ? leaderboard.record(this.gameId, score) : null;
+    // Daily challenge (Phase 12): fold this run into the daily best + play streak.
+    const dailyOutcome = this.isDaily ? daily.record(score) : null;
     const source = capture.lastFrame();
     renderShareCard(this.shareCanvas, {
       score,
@@ -350,6 +383,7 @@ export class Shell {
       onMenu: () => void this.enterMenu(),
       clip: hasClip ? { onSave: () => void this.saveClip() } : undefined,
       share: { onSave: () => void this.saveCard() },
+      daily: dailyOutcome ? { streak: dailyOutcome.streak } : undefined,
     });
 
     // Preview hero: loop the motion clip when we have one, else show the static card.

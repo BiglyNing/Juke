@@ -25,6 +25,8 @@ export const ICONS = {
   check: svg('<path d="m5 12 4.5 4.5L19 7"/>'),
   /** Question mark in a circle — "how to play". */
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.6 2.4-2.6 4"/><circle cx="12" cy="17.2" r="0.6" fill="currentColor" stroke="none"/>'),
+  /** Lightning bolt — the daily challenge. */
+  bolt: svg('<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor" stroke="none"/>'),
 } as const;
 
 /** Wrap an SVG icon string for inline placement alongside button text. */
