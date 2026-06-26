@@ -1034,17 +1034,25 @@ body {
 }
 .overlay__step-n {
   flex: none;
-  width: 1.9rem;
-  height: 1.9rem;
+  width: 2.6rem;
+  height: 2.6rem;
   display: grid;
   place-items: center;
   font-family: var(--font-display);
-  font-weight: 700;
-  font-size: var(--fs-1);
-  color: var(--base);
-  background: linear-gradient(135deg, var(--teal), var(--magenta));
+  font-weight: 800;
+  font-size: var(--fs-4);
+  line-height: 1;
+  color: #fff;
+  background: var(--base);
+  border: 2px solid var(--teal);
   border-radius: 999px;
-  box-shadow: 0 0 14px rgba(46, 230, 200, 0.35);
+  text-shadow:
+    0 0 6px var(--teal),
+    0 0 14px var(--teal),
+    0 0 22px var(--magenta);
+  box-shadow:
+    0 0 16px rgba(46, 230, 200, 0.55),
+    inset 0 0 10px rgba(46, 230, 200, 0.25);
 }
 .overlay__step div {
   font-size: var(--fs-1);
