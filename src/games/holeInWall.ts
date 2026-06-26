@@ -25,7 +25,7 @@ import { binarize, erode, maskOverlap, type BinaryMask } from '../engine/mask';
 import { limbsFramed, type Point } from '../engine/pose';
 import { buildProfile, canCalibrate, type BodyProfile, type Vec } from '../engine/calibration';
 import { holeFromProfile, pickVariation, rasterizeSolid, type Hole, type Variation } from './wall';
-import { perceptionRect, drawCameraFeed, drawPoseSkeleton, drawCrtScanlines } from '../render/perception';
+import { perceptionRect, drawCameraFeed, drawPoseSkeleton, drawCrtScanlines, skeletonColor } from '../render/perception';
 import type { Rect } from '../render/canvas';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
@@ -383,7 +383,9 @@ class HoleInWall implements JukeGame {
     // pose skeleton show the player against the wall without the teal body fill
     // on top. Dimmed (vs full-strength in calibration) so it confirms tracking
     // without competing with the wall you're trying to read.
-    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect, 0.5);
+    // Skeleton recolors as walls are cleared: red at 10, purple at 20.
+    if (frame.pose)
+      drawPoseSkeleton(ctx, frame.pose, rect, 0.5, skeletonColor(this.scoreValue, 10, 20));
     // CRT scanline/roll filter over the whole game scene (under the HUD text).
     drawCrtScanlines(ctx, rect);
     this.drawFraming(ctx, frame);

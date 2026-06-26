@@ -35,7 +35,7 @@
 import { register, type JukeGame, type Need, type Intensity, type CalibrationResult } from '../engine/game';
 import { type PerceptionFrame, maskGrid } from '../engine/frame';
 import { binarize, erode, circleOverlapRatio, type BinaryMask } from '../engine/mask';
-import { perceptionRect, drawCameraFeed, drawPoseSkeleton } from '../render/perception';
+import { perceptionRect, drawCameraFeed, drawPoseSkeleton, skeletonColor } from '../render/perception';
 import type { Rect } from '../render/canvas';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
@@ -53,7 +53,12 @@ const MIN_PLAYER_AREA = 0.012; // fraction of cells that must be "you" for colli
 const HIT_RATIO = 0.16; // fraction of an object over your body that counts as a strike
 const GRAZE_RATIO = 0.05; // near-miss feedback band below a strike
 const SPAWN_MARGIN = 0.14; // how far above the top objects start (normalized)
-const OFF = 0.3; // past this (normalized) an object has left the field
+// Extra distance an object must travel *past* its spawn margin before it counts
+// as having left the field. The cull threshold is `SPAWN_MARGIN + r + EXIT_GRACE`
+// so a freshly spawned object — which starts at `-(SPAWN_MARGIN + r)`, and whose
+// offset exceeds any fixed margin for large/close objects — is never culled before
+// it enters (the old fixed `OFF = 0.3` cull made big slabs vanish on spawn).
+const EXIT_GRACE = 0.06;
 const DEFAULT_UNIT = 0.18; // fallback shoulder width if calibration is missing
 const UNIT_MIN = 0.08; // clamp the apparent size so an odd calibration can't make objects absurd
 const UNIT_MAX = 0.34;
@@ -78,16 +83,21 @@ const WARN_MAX_MS = 900;
 const WARN_MIN_MS = 520;
 // Posture rule: the player has to keep *standing*. Their head must stay above a
 // "stand line" — the bottom of the calibrated sweeper (sideways-dodge) zone. They
-// may dip below it to duck under a sweeper, but if the head stays below it for
-// longer than this grace window it costs a life: no camping in a crouch.
-const STAND_GRACE_MS = 3000;
-// Side-bounds rule: the player has to stay inside the frame horizontally. If their
-// silhouette clips a side edge ("sticking out of bounds") they get an immediate
-// warning, and after a short grace they bleed a life every SIDE_DRAIN_MS until they
-// step back in — a fast punishment, not a slow one.
+// may dip below it to duck under a sweeper, but if the head stays below it too long
+// it costs a life: no camping in a crouch. The "STAND UP!" alarm only appears once
+// they've been crouched past STAND_WARN_MS — a calm grace before the warning fires.
+const STAND_WARN_MS = 2000; // head below the line this long before the warning shows
+const STAND_GRACE_MS = 3000; // ...and this long before it costs a life (warned first)
+// Side-bounds rule: the player has to stay inside the frame horizontally. It only
+// counts as "out" once roughly *half* the body has left the frame (a deliberately
+// lenient bound), and even then the "GET BACK IN!" warning waits until they've been
+// out past SIDE_WARN_MS before showing; after a further grace they bleed a life every
+// SIDE_DRAIN_MS until they step back in.
 const EDGE_BAND_FRAC = 0.025; // width of each side sample band, as a fraction of the grid
-const SIDE_OUT_DENSITY = 0.3; // edge-band fill (0..1) that counts as a body clipping the bound
-const SIDE_GRACE_MS = 1300; // warning shown this long before the bleed starts
+const SIDE_OUT_DENSITY = 0.3; // edge-band fill (0..1) that confirms a body is clipping the bound
+const SIDE_BOUND_FRAC = 0.12; // silhouette centroid within this of an edge ⇒ ~half the body is off-screen
+const SIDE_WARN_MS = 1000; // out the side this long before the warning shows
+const SIDE_GRACE_MS = 700; // ...then this much warning before the life bleed begins
 const SIDE_DRAIN_MS = 550; // lose a life this often while still out (quick)
 // Combo reward: bank this much "heal progress" to earn a life back (capped at
 // START_LIVES). Each clean dodge adds at least 1, and that gain grows by 1 every
@@ -186,6 +196,15 @@ class Dodge implements JukeGame {
   private sideDrainMs = 0;
   /** Queued in update(), fired in render() where canvas coords are known. */
   private fx: { kind: 'hit' | 'graze' | 'slouch' | 'edge' | 'heal'; fatal: boolean; nx: number; ny: number; color: string }[] = [];
+  // Per-frame silhouette analysis, memoized on the frame object: the fixed-timestep
+  // loop runs update() several times per rendered frame under load, all with the
+  // *same* perception frame, so the mask pipeline (binarize + erode + centroid scan)
+  // only needs to run once — the repeats reuse this.
+  private analyzedFrame: PerceptionFrame | null = null;
+  private analyzed: { player: BinaryMask | null; stats: { area: number; cx: number; sideOut: number } | null } = {
+    player: null,
+    stats: null,
+  };
 
   init(): void {
     /* engine calls reset() before init; nothing else to allocate */
@@ -250,14 +269,15 @@ class Dodge implements JukeGame {
     this.sideOutMs = 0;
     this.sideDrainMs = 0;
     this.fx = [];
+    this.analyzedFrame = null;
+    this.analyzed = { player: null, stats: null };
   }
 
   update(frame: PerceptionFrame, dt: number): void {
     if (this.phase !== 'play') return;
 
-    const player = this.playerMask(frame);
-    const stats = player ? this.areaCentroid(player) : null;
-    const present = !!stats && stats.area >= MIN_PLAYER_AREA * player!.data.length;
+    const { player, stats } = this.analyze(frame);
+    const present = !!stats && !!player && stats.area >= MIN_PLAYER_AREA * player.data.length;
 
     // Track where the player actually is, so objects keep raining on them as they
     // weave — fair wherever they stand. Spawning + difficulty advance only while
@@ -383,10 +403,11 @@ class Dodge implements JukeGame {
   }
 
   /**
-   * Enforce the side bounds. The instant the body clips an edge we flag the side
-   * (so render can warn), then after {@link SIDE_GRACE_MS} we start draining a life
-   * every {@link SIDE_DRAIN_MS} — a quick bleed, not a one-off — until the player
-   * steps back in, which clears the timers.
+   * Enforce the side bounds. We flag the side the body is leaving through (so render
+   * can warn), but stay lenient: the warning only shows after {@link SIDE_WARN_MS},
+   * and the life bleed only starts a further {@link SIDE_GRACE_MS} after that —
+   * draining a life every {@link SIDE_DRAIN_MS} until the player steps back in, which
+   * clears the timers.
    */
   private updateSideBounds(sideOut: number, dt: number): void {
     this.sideOut = sideOut;
@@ -396,7 +417,7 @@ class Dodge implements JukeGame {
       return;
     }
     this.sideOutMs += dt;
-    if (this.sideOutMs < SIDE_GRACE_MS) return;
+    if (this.sideOutMs < SIDE_WARN_MS + SIDE_GRACE_MS) return;
     this.sideDrainMs += dt;
     // Fire the edge fx at the raw edge the body is leaving through (render mirrors it).
     const nx = sideOut < 0 ? 0.02 : 0.98;
@@ -410,6 +431,16 @@ class Dodge implements JukeGame {
   }
 
   // --- collision -----------------------------------------------------------
+
+  /** Player mask + silhouette stats for this frame, computed once and reused across
+   *  the frame's repeated fixed-update steps (see {@link analyzed}). */
+  private analyze(frame: PerceptionFrame): { player: BinaryMask | null; stats: { area: number; cx: number; sideOut: number } | null } {
+    if (this.analyzedFrame === frame) return this.analyzed;
+    const player = this.playerMask(frame);
+    this.analyzed = { player, stats: player ? this.areaCentroid(player) : null };
+    this.analyzedFrame = frame;
+    return this.analyzed;
+  }
 
   /** Eroded binary player silhouette in the collision grid, or null if no mask yet. */
   private playerMask(frame: PerceptionFrame): BinaryMask | null {
@@ -444,10 +475,17 @@ class Dodge implements JukeGame {
     const denom = band * h;
     const dl = edgeL / denom;
     const dr = edgeR / denom;
+    const cx = area ? sx / area : this.centerX;
+    // "Out of bounds" sideways means roughly *half* the body has left the frame — a
+    // lenient bound. We can't see the off-frame half, so we infer it from the
+    // silhouette's horizontal center of mass: a body half-out has its visible centroid
+    // pinned within SIDE_BOUND_FRAC of the edge it's leaving through. We still require
+    // the edge band to be filled (SIDE_OUT_DENSITY) so it's genuinely clipping out, not
+    // just a small player standing off-center.
     let sideOut = 0;
-    if (dl >= dr && dl > SIDE_OUT_DENSITY) sideOut = -1;
-    else if (dr > SIDE_OUT_DENSITY) sideOut = 1;
-    return { area, cx: area ? sx / area : this.centerX, sideOut };
+    if (dl >= dr && dl > SIDE_OUT_DENSITY && cx < SIDE_BOUND_FRAC) sideOut = -1;
+    else if (dr > SIDE_OUT_DENSITY && cx > 1 - SIDE_BOUND_FRAC) sideOut = 1;
+    return { area, cx, sideOut };
   }
 
   /**
@@ -460,7 +498,10 @@ class Dodge implements JukeGame {
   }
 
   private offscreen(o: Obj): boolean {
-    return o.x < -OFF || o.x > 1 + OFF || o.y < -OFF || o.y > 1 + OFF;
+    // Radius/spawn-aware so an object is only culled once fully past the edge it
+    // would have spawned from — never on its first live frame (see EXIT_GRACE).
+    const m = SPAWN_MARGIN + o.r + EXIT_GRACE;
+    return o.x < -m || o.x > 1 + m || o.y < -m || o.y > 1 + m;
   }
 
   // --- spawning ------------------------------------------------------------
@@ -565,7 +606,9 @@ class Dodge implements JukeGame {
     this.fireFx(ctx, rect); // hit/graze feedback queued by update()
     for (const p of this.pending) this.drawTelegraph(ctx, p, rect); // warnings, under the objects
     for (const o of this.objects) this.drawObject(ctx, o, rect);
-    if (frame.pose) drawPoseSkeleton(ctx, frame.pose, rect, 0.5); // dimmed in-game; full in calibration
+    // Dimmed in-game; full in calibration. Recolors with score: red at 10, purple at 20.
+    if (frame.pose)
+      drawPoseSkeleton(ctx, frame.pose, rect, 0.5, skeletonColor(this.scoreValue, 10, 20));
     if (this.phase === 'play') {
       this.drawStandZone(ctx, rect);
       this.drawSideWarning(ctx, rect);
@@ -620,9 +663,13 @@ class Dodge implements JukeGame {
    */
   private drawSideWarning(ctx: CanvasRenderingContext2D, rect: Rect): void {
     if (this.sideOut === 0) return;
-    const bleeding = this.sideOutMs >= SIDE_GRACE_MS;
-    const remain = clamp(1 - this.sideOutMs / SIDE_GRACE_MS, 0, 1);
-    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(this.sideOutMs / (bleeding ? 90 : 150)));
+    // Lenient: stay quiet until they've been out past SIDE_WARN_MS, then the
+    // countdown bar covers the warn→bleed grace.
+    const warnElapsed = this.sideOutMs - SIDE_WARN_MS;
+    if (warnElapsed < 0) return;
+    const bleeding = warnElapsed >= SIDE_GRACE_MS;
+    const remain = clamp(1 - warnElapsed / SIDE_GRACE_MS, 0, 1);
+    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(warnElapsed / (bleeding ? 90 : 150)));
     const onRight = this.sideOut < 0; // raw-left clip → mirrored to the screen's right
     const bandW = rect.w * 0.16;
     const edgeX = onRight ? rect.x + rect.w : rect.x;
@@ -661,15 +708,18 @@ class Dodge implements JukeGame {
 
   /**
    * The stand line + a "STAND UP!" countdown. The line marks the bottom of the
-   * standing zone; while the head is below it, a shrinking bar shows how much of
-   * the 3s grace is left before it costs a life. Calm when you're upright,
-   * pulsing red the moment you drop below.
+   * standing zone; it stays calm (teal) while you're upright *and* through the first
+   * STAND_WARN_MS of a crouch, then pulses red with a shrinking bar showing the rest
+   * of the grace before it costs a life.
    */
   private drawStandZone(ctx: CanvasRenderingContext2D, rect: Rect): void {
     const y = rect.y + this.standLineY * rect.h;
-    const danger = this.outOfZoneMs > 0;
-    const remain = clamp(1 - this.outOfZoneMs / STAND_GRACE_MS, 0, 1);
-    const pulse = danger ? 0.55 + 0.45 * Math.abs(Math.sin(this.outOfZoneMs / 110)) : 0.4;
+    // The "STAND UP!" alarm only fires after they've been crouched past STAND_WARN_MS;
+    // before that the line stays calm. The countdown then covers the warn→penalty window.
+    const warnElapsed = this.outOfZoneMs - STAND_WARN_MS;
+    const danger = warnElapsed >= 0;
+    const remain = clamp(1 - warnElapsed / (STAND_GRACE_MS - STAND_WARN_MS), 0, 1);
+    const pulse = danger ? 0.55 + 0.45 * Math.abs(Math.sin(warnElapsed / 110)) : 0.4;
 
     ctx.save();
     // The line itself.

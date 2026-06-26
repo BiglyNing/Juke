@@ -17,6 +17,25 @@ const VISIBILITY_THRESHOLD = 0.5;
 // COLORS.teal (#2ee6c8) as RGB ints, for the per-pixel silhouette fill.
 const TEAL_RGB = [46, 230, 200] as const;
 
+// Neon skeleton "rank" colors: the live skeleton recolors as the player advances
+// through a run. Teal is the starting color (COLORS.teal); these two are the
+// milestone upgrades, shared across every game so the same threshold reads the
+// same hue. Kept here (not in theme tokens) since they're a gameplay-canvas
+// concern, not part of the DOM design system.
+const SKELETON_RED = '#ff2d4b'; // first milestone — hot neon red
+const SKELETON_PURPLE = '#b14dff'; // second milestone — sleek electric purple
+
+/**
+ * Pick the neon skeleton color for a run: teal until `redAt`, hot red from there
+ * to `purpleAt`, then electric purple. Thresholds are per-game (each game passes
+ * its own score and milestones) so progression feels right for its pace.
+ */
+export function skeletonColor(score: number, redAt: number, purpleAt: number): string {
+  if (score >= purpleAt) return SKELETON_PURPLE;
+  if (score >= redAt) return SKELETON_RED;
+  return COLORS.teal;
+}
+
 // Reused offscreen canvas for the upscaled mask overlay.
 const maskCanvas = document.createElement('canvas');
 const maskCtx = maskCanvas.getContext('2d')!;
@@ -81,6 +100,7 @@ export function drawPoseSkeleton(
   pose: Point[],
   rect: Rect,
   strength = 1,
+  color: string = COLORS.teal,
 ): void {
   const px = (nx: number): number => rect.x + (1 - nx) * rect.w; // mirror x (selfie)
   const py = (ny: number): number => rect.y + ny * rect.h;
@@ -89,9 +109,9 @@ export function drawPoseSkeleton(
   ctx.save();
   ctx.globalAlpha = strength;
   ctx.lineWidth = Math.max(1.5, (ctx.canvas.width / 320) * weight);
-  ctx.strokeStyle = COLORS.teal;
+  ctx.strokeStyle = color;
   ctx.lineCap = 'round';
-  ctx.shadowColor = rgba(COLORS.teal, 0.8);
+  ctx.shadowColor = rgba(color, 0.8);
   ctx.shadowBlur = 8 * strength;
   for (const { start, end } of PoseLandmarker.POSE_CONNECTIONS) {
     const a = pose[start];

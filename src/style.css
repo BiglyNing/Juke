@@ -26,6 +26,20 @@
   --danger: #ff4f7e;
   --line: rgba(46, 230, 200, 0.22);
 
+  /* --- vaporwave-sunset backdrop (the lit scene is painted on the canvas in
+     shell/sunset.ts, only on idle screens). `--sunset-scrim` is the top-weighted
+     readability veil the lifecycle screens lay over that animated canvas sunset —
+     dark where headings sit, clearing toward the horizon so the sun + neon grid
+     read through the lower screen. The body itself stays plain dark so nothing
+     bleeds through the cleared canvas during a game. */
+  --sunset-scrim: linear-gradient(
+    180deg,
+    rgba(8, 6, 20, 0.82) 0%,
+    rgba(8, 6, 20, 0.58) 42%,
+    rgba(10, 7, 24, 0.3) 72%,
+    rgba(10, 7, 24, 0.12) 100%
+  );
+
   /* --- type --- */
   --font-display: 'Orbitron', 'Chakra Petch', system-ui, sans-serif;
   --font-mono: 'Space Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
@@ -72,6 +86,10 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* Plain dark base. The sunset is painted onto the canvas itself (drawSunset) on
+     idle screens; the body must stay dark so it never bleeds through the cleared
+     canvas during a game — the camera feed renders semi-transparent, so a lit body
+     background would wash it out and show in the letterbox bars. */
   background:
     radial-gradient(ellipse 120% 80% at 50% -10%, rgba(255, 79, 216, 0.12), transparent 60%),
     radial-gradient(ellipse 100% 70% at 50% 110%, rgba(46, 230, 200, 0.1), transparent 60%),
@@ -240,9 +258,8 @@ body {
   padding: var(--sp-6);
   text-align: center;
   z-index: 40;
-  background:
-    radial-gradient(circle at 50% 38%, rgba(46, 230, 200, 0.08), transparent 60%),
-    rgba(12, 10, 28, 0.86);
+  /* Scrim over the animated canvas sunset (drawn behind on the title state). */
+  background: var(--sunset-scrim);
   backdrop-filter: blur(3px);
   animation: fade-in var(--dur-med) var(--ease-out);
 }
@@ -297,9 +314,14 @@ body {
   padding: var(--sp-6);
   text-align: center;
   z-index: 50;
-  background:
-    radial-gradient(ellipse 90% 60% at 50% 35%, rgba(255, 79, 216, 0.1), transparent 65%),
-    rgba(12, 10, 28, 0.94);
+  /* Scrim over the canvas sunset; a hair heavier so the rotating tips stay crisp. */
+  background: linear-gradient(
+    180deg,
+    rgba(8, 6, 20, 0.88) 0%,
+    rgba(8, 6, 20, 0.7) 45%,
+    rgba(10, 7, 24, 0.4) 74%,
+    rgba(10, 7, 24, 0.2) 100%
+  );
 }
 .loader.show {
   display: flex;
@@ -422,9 +444,8 @@ body {
   gap: var(--sp-6);
   padding: var(--sp-6);
   pointer-events: auto;
-  background:
-    radial-gradient(ellipse 90% 60% at 50% 0%, rgba(255, 79, 216, 0.12), transparent 60%),
-    rgba(12, 10, 28, 0.82);
+  /* Scrim over the animated canvas sunset (sun + neon grid show through below). */
+  background: var(--sunset-scrim);
   backdrop-filter: blur(4px);
   animation: fade-in var(--dur-med) var(--ease-out);
 }
@@ -506,6 +527,18 @@ body {
   border-radius: var(--radius);
   backdrop-filter: blur(6px);
   box-shadow: 0 12px 40px rgba(5, 4, 14, 0.5);
+}
+.calib__warn {
+  align-self: center;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: var(--fs-0);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: linear-gradient(90deg, var(--teal), var(--magenta));
+  box-shadow: 0 0 16px rgba(46, 230, 200, 0.35);
 }
 .calib__head {
   font-size: var(--fs-4);
@@ -646,6 +679,7 @@ body {
   background: linear-gradient(90deg, var(--danger), var(--sunset));
 }
 .hud__score {
+  position: relative;
   font-family: var(--font-display);
   font-size: var(--fs-5);
   font-weight: 900;
@@ -653,20 +687,81 @@ body {
   color: var(--teal);
   text-shadow: 0 0 18px rgba(46, 230, 200, 0.5);
   font-variant-numeric: tabular-nums;
+  /* Scale from the right edge so the punch-up doesn't drift the number off-screen. */
+  transform-origin: center right;
+}
+/* Expanding ring that flares out of the number on every point. Lives on the
+ * ::before so it sits behind the digits; restarts because app.ts re-adds `.pop`. */
+.hud__score::before {
+  content: '';
+  position: absolute;
+  inset: -0.3em -0.45em;
+  border-radius: 999px;
+  border: 2px solid var(--sunset);
+  opacity: 0;
+  pointer-events: none;
+}
+.hud__score.pop::before {
+  animation: score-burst 480ms var(--ease-out);
 }
 .hud__score.pop {
-  animation: score-pop var(--dur-med) var(--ease-out);
+  animation: score-pop 480ms var(--ease-out);
 }
+/* Juicy point-up: overshoot, a little wobble, a glow bloom, and a color flash
+ * cycling sunset -> magenta -> back to teal as it settles. */
 @keyframes score-pop {
   0% {
-    transform: scale(1);
+    transform: scale(1) rotate(0);
   }
-  40% {
-    transform: scale(1.35);
+  22% {
+    transform: scale(1.5) rotate(-3deg);
+    color: var(--sunset);
+    text-shadow:
+      0 0 26px rgba(255, 159, 69, 0.95),
+      0 0 54px rgba(255, 79, 216, 0.6);
+  }
+  48% {
+    transform: scale(0.9) rotate(2deg);
     color: var(--magenta);
   }
+  70% {
+    transform: scale(1.1) rotate(-1deg);
+  }
   100% {
-    transform: scale(1);
+    transform: scale(1) rotate(0);
+    color: var(--teal);
+    text-shadow: 0 0 18px rgba(46, 230, 200, 0.5);
+  }
+}
+@keyframes score-burst {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+    border-color: var(--magenta);
+  }
+}
+/* Reduced motion: keep the feedback (a quick color/glow flash) but drop the
+ * scaling, wobble, and expanding ring. */
+@media (prefers-reduced-motion: reduce) {
+  .hud__score.pop {
+    animation: score-flash var(--dur-fast) var(--ease-out);
+  }
+  .hud__score.pop::before {
+    animation: none;
+  }
+  @keyframes score-flash {
+    0%,
+    100% {
+      color: var(--teal);
+    }
+    50% {
+      color: var(--magenta);
+      text-shadow: 0 0 24px rgba(255, 79, 216, 0.8);
+    }
   }
 }
 
@@ -679,9 +774,14 @@ body {
   padding: var(--sp-5) var(--sp-6);
   pointer-events: auto;
   overflow-y: auto; /* safety net: scroll rather than clip on short windows */
-  background:
-    radial-gradient(ellipse 80% 60% at 50% 40%, rgba(255, 79, 126, 0.14), transparent 60%),
-    rgba(12, 10, 28, 0.86);
+  /* Scrim over the canvas sunset — evened out a touch since the result content
+     (score, preview, buttons, hint) fills the screen top to bottom. */
+  background: linear-gradient(
+    180deg,
+    rgba(8, 6, 20, 0.8) 0%,
+    rgba(8, 6, 20, 0.62) 50%,
+    rgba(20, 10, 28, 0.45) 100%
+  );
   backdrop-filter: blur(4px);
   animation: fade-in var(--dur-med) var(--ease-out);
 }

@@ -26,6 +26,8 @@ export interface CalibView {
   intensity: 'standing' | 'seated';
   heading: string;
   hint: string;
+  /** Standing-still / calibration warning banner, shown above the heading. */
+  warn: string;
   checks: { label: string; ok: boolean }[];
   /** 0..1 calibration progress. */
   progress: number;
@@ -137,6 +139,7 @@ export function showCalibrate(view: CalibView): void {
   calibChecks = [];
 
   const panel = el('div', 'calib__panel');
+  const warnEl = el('p', 'calib__warn', view.warn);
   calibHeadEl = el('div', 'calib__head wordmark', view.heading);
   calibHintEl = el('p', 'calib__hint', view.hint);
 
@@ -154,7 +157,7 @@ export function showCalibrate(view: CalibView): void {
   calibBarEl = el('div', 'calib__fill');
   bar.appendChild(calibBarEl);
 
-  panel.append(calibHeadEl, calibHintEl, list, bar);
+  panel.append(warnEl, calibHeadEl, calibHintEl, list, bar);
   calibEl.appendChild(panel);
   calibEl.classList.add('show');
   updateCalibrate(view);

@@ -27,7 +27,7 @@
 import { register, type JukeGame, type Need, type Intensity } from '../engine/game';
 import type { PerceptionFrame } from '../engine/frame';
 import { fingerStates, type FingerStates, type Point } from '../engine/pose';
-import { perceptionRect, drawCameraFeed, drawHandSkeleton } from '../render/perception';
+import { perceptionRect, drawCameraFeed, drawHandSkeleton, skeletonColor } from '../render/perception';
 import { juice } from '../juice/juice';
 import { audio } from '../juice/audio';
 import { COLORS, FONT, rgba } from '../shell/theme';
@@ -352,8 +352,14 @@ class SimonSays implements JukeGame {
     const matched = playing && !this.warning && this.detected(this.required, frame);
     const hand = frame.hands && frame.hands.length > 0 ? frame.hands[0] : null;
     if (hand) {
-      // Green when a "do it" requirement is satisfied; red when you're tripping a trap.
-      const color = matched ? (this.obey ? COLORS.ok : COLORS.danger) : COLORS.teal;
+      // Green when a "do it" requirement is satisfied; red when you're tripping a
+      // trap. Otherwise the resting skeleton recolors with score: red at 50, purple
+      // at 100 (Simon racks up points fast, so the milestones sit higher).
+      const color = matched
+        ? this.obey
+          ? COLORS.ok
+          : COLORS.danger
+        : skeletonColor(this.scoreValue, 50, 100);
       drawHandSkeleton(ctx, hand, rect, color);
     }
 

@@ -22,8 +22,8 @@ import { limbsFramed } from '../engine/pose';
 import { audio } from '../juice/audio';
 import { juice } from '../juice/juice';
 import { capture } from '../juice/capture';
-import { COLORS, rgba } from './theme';
 import { drawAttractFigure } from './attractFigure';
+import { drawSunset } from './sunset';
 import { mascot } from './mascot';
 import { showLoadingScreen, hideLoadingScreen } from './loadingScreen';
 import { showOverlay, hideOverlay } from './overlay';
@@ -164,6 +164,16 @@ export class Shell {
       this.handsReady = true;
       hideLoadingScreen();
     }
+    this.toCalibrate();
+  }
+
+  /**
+   * Enter the calibration step for the active game, always measuring a fresh body
+   * profile (so settings re-fit the player every run — including on retry, where
+   * they may have moved). The calibration screen warns the player and tells them to
+   * hold still while it samples.
+   */
+  private toCalibrate(): void {
     this.calibrator.reset();
     this.seatedHoldMs = 0;
     this.result = null;
@@ -211,6 +221,7 @@ export class Shell {
         intensity: 'seated',
         heading: handVisible ? 'HOLD IT' : 'SHOW YOUR HAND',
         hint: 'Hold an open hand up to the camera.',
+        warn: 'Calibrating — hold your hand steady.',
         checks: [{ label: 'Hand in view', ok: handVisible }],
         progress: Math.min(1, this.seatedHoldMs / SEATED_HOLD_MS),
         ready: handVisible,
@@ -227,6 +238,7 @@ export class Shell {
           ? 'Full body in frame. Hold the pose!'
           : 'Legs in frame. Hold still! (Show your feet too for wider poses.)'
         : 'Get your hands and legs in frame. Feet are optional.',
+      warn: 'Calibrating — stand still and hold your pose.',
       checks: [
         { label: 'Left hand', ok: !!f?.wristL },
         { label: 'Right hand', ok: !!f?.wristR },
@@ -390,9 +402,11 @@ export class Shell {
   private async retry(): Promise<void> {
     if (!this.gameId) return;
     this.clearClipPreview();
-    // Re-arm the same game (reset → waiting preview) and reuse the profile.
+    // Re-arm the same game (reset → waiting preview), then recalibrate from scratch
+    // rather than reusing the old profile — a retry re-measures the player so the
+    // settings stay correct if they've shifted position since the last run.
     await this.engine.setActiveGame(this.gameId);
-    this.toCountdown();
+    this.toCalibrate();
   }
 
   // --- dev: headless fixture replay (F key / drag-drop) -------------------
@@ -427,13 +441,10 @@ export class Shell {
     const w = ctx.canvas.width;
     const h = ctx.canvas.height;
     const pulse = 0.5 + 0.5 * Math.sin(now / 900);
-    const r = Math.max(w, h) * (0.25 + pulse * 0.05);
-    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, r);
-    g.addColorStop(0, rgba(COLORS.teal, 0.05 + pulse * 0.06));
-    g.addColorStop(0.6, rgba(COLORS.magenta, 0.03 + pulse * 0.03));
-    g.addColorStop(1, rgba(COLORS.bg, 0));
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
+
+    // The shared CRT-vaporwave sunset: sky ramp, banded sun, scrolling neon floor.
+    // The DOM screens sit over this with a light scrim, so it reads through them.
+    drawSunset(ctx, now, w, h);
 
     // Attract figure: a faint glowing person cycling wall poses behind the
     // title/menu, so the first frame is never static (Phase 9). Skipped on
